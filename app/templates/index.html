@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cognito — Offline Self-Learning Personal Productivity Agent</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="top-header">
+      <div class="header-left">
+        <div class="logo">
+          <div class="logo-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a9 9 0 0 0-9 9c0 3.6 2.1 6.7 5.2 8.1.4.2.8.5 1 .9l.8 2.2c.2.6.8 1 1.5 1h1c.7 0 1.3-.4 1.5-1l.8-2.2c.2-.4.6-.7 1-.9 3.1-1.4 5.2-4.5 5.2-8.1a9 9 0 0 0-9-9z"></path>
+              <path d="M9 10h.01"></path>
+              <path d="M15 10h.01"></path>
+              <path d="M9.5 15a3.5 3.5 0 0 0 5 0"></path>
+            </svg>
+          </div>
+          <div class="logo-text">
+            <span class="brand-name">Cognito</span>
+            <span class="brand-badge">v1.2 Offline</span>
+          </div>
+        </div>
+        <div class="privacy-badge" title="Verified: All data, embeddings, and reasoning remain 100% on this machine.">
+          <span class="pulse-dot"></span>
+          <span class="badge-text">100% On-Device &bull; 0 Cloud Calls</span>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div class="quick-capture-bar" onclick="openQuickCapture()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <span class="quick-placeholder">Quick capture note or task...</span>
+          <kbd class="shortcut-key">Ctrl + K</kbd>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div class="engine-badge" id="engineBadge" title="Active local reasoning engine">
+          <span class="engine-icon">⚡</span>
+          <span id="activeEngineName">Local Reasoner</span>
+        </div>
+        <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle Dark/Light theme">
+          <span id="themeIcon">🌙</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="main-body">
+      <!-- Sidebar Navigation -->
+      <aside class="sidebar">
+        <nav class="nav-menu">
+          <button class="nav-item active" data-tab="tasks" onclick="switchTab('tasks')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+            <span>Tasks</span>
+            <span class="nav-count" id="navTaskCount">0</span>
+          </button>
+          
+          <button class="nav-item" data-tab="notes" onclick="switchTab('notes')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            <span>Notes</span>
+            <span class="nav-count" id="navNoteCount">0</span>
+          </button>
+
+          <button class="nav-item" data-tab="memories" onclick="switchTab('memories')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            <span>Transparency Dashboard</span>
+            <span class="nav-badge-learning" id="navMemoryCount">2 habits</span>
+          </button>
+
+          <button class="nav-item" data-tab="chat" onclick="switchTab('chat')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <span>AI Copilot</span>
+          </button>
+
+          <button class="nav-item" data-tab="settings" onclick="switchTab('settings')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span>Settings & Vault</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="adaptation-card">
+            <div class="adaptation-title">
+              <span>Learning Loop</span>
+              <span class="status-active">Active</span>
+            </div>
+            <div class="adaptation-metric">
+              <span class="label">Adaptation Precision:</span>
+              <span class="value" id="sidebarPrecision">100%</span>
+            </div>
+            <div class="adaptation-metric">
+              <span class="label">Correction Rate:</span>
+              <span class="value" id="sidebarCorrectionRate">0.0%</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Content Views -->
+      <main class="content-container">
+        
+        <!-- Tab 1: TASKS VIEW -->
+        <section id="tasks-tab" class="tab-view active">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Personal Tasks</h1>
+              <p class="view-subtitle">Organized with continuous preference learning and on-device subtask breakdown.</p>
+            </div>
+            <div class="view-actions">
+              <div class="view-mode-toggle">
+                <button class="view-btn active" id="viewModeKanban" onclick="setTaskView('kanban')">Kanban</button>
+                <button class="view-btn" id="viewModeList" onclick="setTaskView('list')">List</button>
+              </div>
+              <button class="btn btn-primary" onclick="openNewTaskModal()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                New Task
+              </button>
+            </div>
+          </div>
+
+          <!-- Kanban View -->
+          <div class="kanban-board" id="kanbanBoard">
+            <!-- Todo Column -->
+            <div class="kanban-column" id="col-todo">
+              <div class="column-header">
+                <div class="col-title-group">
+                  <span class="col-dot todo"></span>
+                  <span class="col-name">To Do</span>
+                  <span class="col-count" id="count-todo">0</span>
+                </div>
+              </div>
+              <div class="column-cards" id="cards-todo"></div>
+            </div>
+
+            <!-- In Progress Column -->
+            <div class="kanban-column" id="col-in_progress">
+              <div class="column-header">
+                <div class="col-title-group">
+                  <span class="col-dot in-progress"></span>
+                  <span class="col-name">In Progress</span>
+                  <span class="col-count" id="count-in_progress">0</span>
+                </div>
+              </div>
+              <div class="column-cards" id="cards-in_progress"></div>
+            </div>
+
+            <!-- Done Column -->
+            <div class="kanban-column" id="col-done">
+              <div class="column-header">
+                <div class="col-title-group">
+                  <span class="col-dot done"></span>
+                  <span class="col-name">Completed</span>
+                  <span class="col-count" id="count-done">0</span>
+                </div>
+              </div>
+              <div class="column-cards" id="cards-done"></div>
+            </div>
+          </div>
+
+          <!-- List View (Hidden by default) -->
+          <div class="task-list-container hidden" id="taskListView">
+            <div class="task-list" id="taskListItems"></div>
+          </div>
+        </section>
+
+        <!-- Tab 2: NOTES VIEW -->
+        <section id="notes-tab" class="tab-view">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Notes & Knowledge</h1>
+              <p class="view-subtitle">Instant local capture with automatic habit and fact extraction.</p>
+            </div>
+            <div class="view-actions">
+              <div class="search-box">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="noteSearchInput" placeholder="Semantic search notes..." oninput="handleNoteSearch()">
+              </div>
+              <button class="btn btn-primary" onclick="openNewNoteModal()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                New Note
+              </button>
+            </div>
+          </div>
+
+          <div class="notes-grid" id="notesGrid"></div>
+        </section>
+
+        <!-- Tab 3: TRANSPARENCY DASHBOARD -->
+        <section id="memories-tab" class="tab-view">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Transparency Dashboard</h1>
+              <p class="view-subtitle">Inspect, fine-tune, or delete everything Cognito has learned about you.</p>
+            </div>
+            <div class="view-actions">
+              <button class="btn btn-secondary" onclick="openAuditDecisionLogModal()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                View Decision Log
+              </button>
+              <button class="btn btn-primary" onclick="openManualMemoryModal()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Add Custom Memory
+              </button>
+            </div>
+          </div>
+
+          <!-- Transparency Metrics Row -->
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">Active Memories</div>
+              <div class="metric-val" id="metricActiveMemories">0</div>
+              <div class="metric-foot" id="metricCategoryFoot">Habits, Preferences & Facts</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Correction Rate Trend</div>
+              <div class="metric-val text-accent" id="metricCorrectionRate">0.0%</div>
+              <div class="metric-foot">Declines as agent adapts</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Memory Precision</div>
+              <div class="metric-val text-success" id="metricPrecision">100%</div>
+              <div class="metric-foot">High confidence ratio</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Reconciled Decisions</div>
+              <div class="metric-val" id="metricTotalDecisions">0</div>
+              <div class="metric-foot" id="metricDecisionBreakdown">Add &bull; Update &bull; Delete</div>
+            </div>
+          </div>
+
+          <!-- Filter Category Tabs -->
+          <div class="memory-filters">
+            <button class="filter-pill active" data-category="all" onclick="filterMemories('all')">All Memories</button>
+            <button class="filter-pill" data-category="habit" onclick="filterMemories('habit')">Habits</button>
+            <button class="filter-pill" data-category="preference" onclick="filterMemories('preference')">Preferences</button>
+            <button class="filter-pill" data-category="correction" onclick="filterMemories('correction')">Corrections</button>
+            <button class="filter-pill" data-category="fact" onclick="filterMemories('fact')">Facts</button>
+          </div>
+
+          <!-- Memories List / Cards -->
+          <div class="memories-container" id="memoriesContainer"></div>
+        </section>
+
+        <!-- Tab 4: AI COPILOT CHAT -->
+        <section id="chat-tab" class="tab-view">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Offline AI Copilot</h1>
+              <p class="view-subtitle">Private assistant grounded entirely on your on-device notes, tasks, and learned preferences.</p>
+            </div>
+            <div class="chat-engine-status" id="chatEngineStatus">
+              <span>Reasoning: Local Engine</span>
+            </div>
+          </div>
+
+          <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+              <div class="message assistant-message">
+                <div class="message-bubble">
+                  <p>Hello! I am your <strong>Offline Productivity Copilot</strong>. I run 100% locally on your machine with zero cloud connectivity.</p>
+                  <p>You can ask me to:</p>
+                  <ul>
+                    <li><em>"What are my highest priorities today?"</em></li>
+                    <li><em>"What habits have you learned about my work?"</em></li>
+                    <li><em>"Summarize my notes or pending items"</em></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="chat-input-row">
+              <textarea id="chatInput" placeholder="Ask your offline assistant... (Press Enter to send, Shift+Enter for newline)" rows="1" onkeydown="handleChatKeyDown(event)"></textarea>
+              <button class="btn btn-primary chat-send-btn" onclick="sendChatMessage()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 5: SETTINGS & VAULT -->
+        <section id="settings-tab" class="tab-view">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Settings & Data Vault</h1>
+              <p class="view-subtitle">Configure local reasoning models, verify zero-cloud security, and manage offline backups.</p>
+            </div>
+          </div>
+
+          <div class="settings-grid">
+            <!-- Reasoning Engine Settings -->
+            <div class="settings-card">
+              <h3 class="card-title">Local Reasoning Engine</h3>
+              <p class="card-desc">Choose between the zero-dependency built-in offline reasoner or connect to a locally running Ollama instance.</p>
+              
+              <div class="form-group">
+                <label>Active Engine:</label>
+                <select id="settingEngineSelect" class="form-control" onchange="handleEngineSelectChange()">
+                  <option value="local">Built-in Local Reasoner (100% Offline, Zero-Setup)</option>
+                  <option value="ollama">Local Ollama / LM Studio (localhost:11434)</option>
+                </select>
+              </div>
+
+              <div id="ollamaSettingsGroup" class="hidden">
+                <div class="form-group">
+                  <label>Local Ollama URL:</label>
+                  <input type="text" id="settingOllamaUrl" class="form-control" value="http://127.0.0.1:11434">
+                </div>
+                <div class="form-group">
+                  <label>Ollama Model Name:</label>
+                  <input type="text" id="settingOllamaModel" class="form-control" value="llama3.2:3b">
+                </div>
+                <button class="btn btn-secondary" onclick="testOllamaConnection()">
+                  Test Ollama Connection
+                </button>
+                <span id="ollamaStatusMsg" class="status-msg"></span>
+              </div>
+
+              <div style="margin-top: 1rem;">
+                <button class="btn btn-primary" onclick="saveEngineSettings()">Save Engine Settings</button>
+              </div>
+            </div>
+
+            <!-- Privacy & Offline Audit -->
+            <div class="settings-card">
+              <h3 class="card-title">Offline Privacy Audit</h3>
+              <p class="card-desc">Continuous guarantee that your personal productivity data never leaves this device.</p>
+              
+              <div class="audit-list">
+                <div class="audit-item">
+                  <span class="audit-icon text-success">✓</span>
+                  <div>
+                    <strong>Zero External Network Calls</strong>
+                    <div class="audit-detail">All HTTP/socket requests outside localhost are restricted.</div>
+                  </div>
+                </div>
+                <div class="audit-item">
+                  <span class="audit-icon text-success">✓</span>
+                  <div>
+                    <strong>Local SQLite Storage</strong>
+                    <div class="audit-detail">Database stored locally at <code>data/cognito_agent.db</code>.</div>
+                  </div>
+                </div>
+                <div class="audit-item">
+                  <span class="audit-icon text-success">✓</span>
+                  <div>
+                    <strong>On-Device Vector Search</strong>
+                    <div class="audit-detail">TF-IDF sparse cosine embeddings computed locally in Python.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Backup & Export -->
+            <div class="settings-card">
+              <h3 class="card-title">Encrypted Data Vault & Backup</h3>
+              <p class="card-desc">Full ownership of your productivity records. Export or restore at any time.</p>
+              
+              <div class="backup-actions">
+                <button class="btn btn-secondary" onclick="exportDataBackup()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Export Local Backup (JSON)
+                </button>
+                
+                <div class="import-wrapper">
+                  <label class="btn btn-secondary import-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    Restore from Backup
+                    <input type="file" id="backupFileInput" accept=".json" onchange="importDataBackup(event)" style="display:none;">
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- MODALS -->
+
+  <!-- Quick Capture Modal (Ctrl + K) -->
+  <div class="modal-overlay" id="quickCaptureModal">
+    <div class="modal-box modal-compact">
+      <div class="modal-header">
+        <h3 class="modal-title">⚡ Quick Capture</h3>
+        <button class="modal-close" onclick="closeModal('quickCaptureModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="quickCaptureInput" class="form-control" rows="3" placeholder="Type anything... e.g.:
+- 'Prepare client demo for Friday #client'
+- 'Note: Project architecture uses SQLite and TF-IDF'
+- 'Gym workout every weekday at 6pm'" onkeydown="handleQuickCaptureKeyDown(event)"></textarea>
+        <div class="quick-capture-hints">
+          <span>Tip: Add <code>#tag</code> for auto-tagging or <code>note:</code> to force a note.</span>
+          <kbd>Ctrl+Enter to save</kbd>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('quickCaptureModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitQuickCapture()">Capture</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Task Modal -->
+  <div class="modal-overlay" id="taskModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title" id="taskModalTitle">Create New Task</h3>
+        <button class="modal-close" onclick="closeModal('taskModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editTaskId">
+        <div class="form-group">
+          <label>Task Title *</label>
+          <input type="text" id="taskTitleInput" class="form-control" placeholder="What needs to be done?">
+        </div>
+        <div class="form-group">
+          <label>Description / Context</label>
+          <textarea id="taskDescInput" class="form-control" rows="3" placeholder="Additional details, notes, or criteria..."></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Priority</label>
+            <select id="taskPriorityInput" class="form-control">
+              <option value="low">Low Priority</option>
+              <option value="medium" selected>Medium Priority</option>
+              <option value="high">High Priority</option>
+              <option value="urgent">Urgent Priority</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Due Date</label>
+            <input type="date" id="taskDueDateInput" class="form-control">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Tags (comma-separated)</label>
+          <input type="text" id="taskTagsInput" class="form-control" placeholder="work, client, project-x">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('taskModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTaskModal()">Save Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New / Edit Note Modal -->
+  <div class="modal-overlay" id="noteModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title" id="noteModalTitle">Create Note</h3>
+        <button class="modal-close" onclick="closeModal('noteModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editNoteId">
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="noteTitleInput" class="form-control" placeholder="Note Title...">
+        </div>
+        <div class="form-group">
+          <label>Content (Markdown supported)</label>
+          <textarea id="noteContentInput" class="form-control" rows="8" placeholder="Write your notes, observations, or ideas..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Tags</label>
+          <input type="text" id="noteTagsInput" class="form-control" placeholder="ideas, architecture, personal">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('noteModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveNoteModal()">Save Note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Correction Feedback Modal (PRD §5.4 & §7) -->
+  <div class="modal-overlay" id="feedbackCorrectionModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">Teach Agent: Correct Recommendation</h3>
+        <button class="modal-close" onclick="closeModal('feedbackCorrectionModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="feedbackTaskId">
+        <div class="correction-notice">
+          <strong>How Cognito learns:</strong> Your correction will pass through the two-phase memory writer, updating or superseding existing rules with recorded provenance.
+        </div>
+        <div class="form-group">
+          <label>Agent's Original Recommendation:</label>
+          <div class="readonly-box" id="feedbackOriginalSuggestion">Priority: High</div>
+        </div>
+        <div class="form-group">
+          <label>Your Correction / Desired Preference *</label>
+          <textarea id="feedbackCorrectionInput" class="form-control" rows="3" placeholder="e.g. 'Acme Corp demos should always be Medium priority, not urgent.' or 'Client follow-ups belong in the afternoon.'"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('feedbackCorrectionModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitTaskCorrection()">Teach & Apply Correction</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Provenance "Why this memory exists" Modal (PRD §5.5) -->
+  <div class="modal-overlay" id="provenanceModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">Memory Provenance: Why this exists</h3>
+        <button class="modal-close" onclick="closeModal('provenanceModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="provenance-summary">
+          <div class="badge-row">
+            <span class="cat-badge" id="provCategory">Habit</span>
+            <span class="conf-badge" id="provConfidence">85% Confidence</span>
+            <span class="update-badge" id="provUpdateCount">0 updates</span>
+          </div>
+          <p class="prov-content" id="provContent"></p>
+          <div class="prov-source" id="provSource"></div>
+        </div>
+
+        <h4 class="history-title">Evolution & Decision Audit History:</h4>
+        <div class="decision-timeline" id="provTimeline"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('provenanceModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual Add / Edit Memory Modal -->
+  <div class="modal-overlay" id="memoryEditModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title" id="memoryEditModalTitle">Add Custom Memory</h3>
+        <button class="modal-close" onclick="closeModal('memoryEditModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editMemoryId">
+        <div class="form-group">
+          <label>Category</label>
+          <select id="memoryCategoryInput" class="form-control">
+            <option value="habit">Habit (Daily or routine action)</option>
+            <option value="preference" selected>Preference (Priority or workflow rule)</option>
+            <option value="correction">Correction Rule</option>
+            <option value="fact">Factoid / Static Knowledge</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Memory Content *</label>
+          <textarea id="memoryContentInput" class="form-control" rows="3" placeholder="e.g. 'User prefers to tackle high priority bug fixes in the morning.'"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Confidence Weight: <span id="confWeightLabel">85%</span></label>
+          <input type="range" id="memoryConfidenceInput" min="0.1" max="1.0" step="0.05" value="0.85" oninput="document.getElementById('confWeightLabel').innerText = Math.round(this.value * 100) + '%'">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('memoryEditModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveMemoryModal()">Save Memory</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audit Decision Log Modal -->
+  <div class="modal-overlay" id="auditModal">
+    <div class="modal-box modal-wide">
+      <div class="modal-header">
+        <h3 class="modal-title">Memory Decision Audit Trail</h3>
+        <button class="modal-close" onclick="closeModal('auditModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="card-desc">Every ADD, UPDATE, and DELETE decision made by the on-device memory reconciliation pipeline.</p>
+        <div class="audit-table-wrapper">
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Memory ID</th>
+                <th>Reasoning / Context</th>
+                <th>Trigger</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="auditTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('auditModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Scripts -->
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/tasks.js"></script>
+  <script src="/static/js/notes.js"></script>
+  <script src="/static/js/memory.js"></script>
+  <script src="/static/js/chat.js"></script>
+  <script src="/static/js/settings.js"></script>
+</body>
+</html>
