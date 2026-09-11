@@ -12,13 +12,20 @@ VECTOR_STORE_PATH = DATA_DIR / "vector_store.json"
 BACKUP_DIR = DATA_DIR / "backups"
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
+from app.security import validate_ollama_url
+
 # Application settings
 APP_NAME = "Cognito"
 APP_VERSION = "1.2.0"
 OFFLINE_STRICT_MODE = True  # Enforces 100% local operation
 
 # Local LLM settings (Ollama / LocalAI / LM Studio)
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+_raw_ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+try:
+    OLLAMA_BASE_URL = validate_ollama_url(_raw_ollama_base_url, strict_mode=OFFLINE_STRICT_MODE)
+except ValueError as e:
+    raise ValueError(f"Invalid OLLAMA_BASE_URL configuration: {e}") from e
+
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 DEFAULT_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 

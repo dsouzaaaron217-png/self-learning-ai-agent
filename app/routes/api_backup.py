@@ -6,6 +6,8 @@ from app.database import get_db, utc_now_iso
 from app.models import TaskModel, NoteModel, MemoryModel, MemoryDecisionLogModel, FeedbackModel, SettingsModel
 from app.vector_store import global_vector_store
 from app.reasoning.ollama_adapter import OllamaAdapter
+from app.config import OFFLINE_STRICT_MODE
+from app.security import validate_ollama_url
 
 api_backup_bp = Blueprint("api_backup", __name__, url_prefix="/api")
 
@@ -147,8 +149,12 @@ def import_backup():
 def get_settings():
     settings = SettingsModel.get_all()
     ollama_url = settings.get("ollama_url", "http://127.0.0.1:11434")
-    ollama_available = OllamaAdapter(base_url=ollama_url).is_available()
-    
+    try:
+        validated_url = validate_ollama_url(ollama_url, strict_mode=OFFLINE_STRICT_MODE)
+        ollama_available = OllamaAdapter(base_url=validated_url).is_available()
+    except ValueError:
+        ollama_available = False
+
     return jsonify({
         "success": True,
         "settings": settings,
@@ -157,7 +163,7 @@ def get_settings():
             "is_reachable": ollama_available
         },
         "privacy": {
-            "offline_enforced": True,
+            "offline_enforced": OFFLINE_STRICT_MODE,
             "cloud_calls": 0,
             "telemetry": "Disabled"
         }
@@ -166,6 +172,19 @@ def get_settings():
 @api_backup_bp.route("/settings", methods=["POST"])
 def update_settings():
     data = request.get_json() or {}
+
+    # Validate Ollama URL using the centralized security validator
+    if "ollama_url" in data:
+        raw_url = str(data["ollama_url"]).strip()
+        try:
+            validated_url = validate_ollama_url(raw_url, strict_mode=OFFLINE_STRICT_MODE)
+            data["ollama_url"] = validated_url
+        except ValueError as e:
+            return jsonify({
+                "success": False,
+                "error": f"Invalid Ollama URL: {e}"
+            }), 400
+
     for key, val in data.items():
         SettingsModel.set(key, str(val))
     return jsonify({"success": True, "settings": SettingsModel.get_all()})

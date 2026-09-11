@@ -2,7 +2,8 @@ import json
 import urllib.request
 import urllib.error
 from typing import Dict, Any, List, Optional
-from app.config import OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL
+from app.config import OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, OFFLINE_STRICT_MODE
+from app.security import validate_ollama_url
 from app.reasoning.base import BaseReasoner
 from app.reasoning.local_reasoner import LocalReasoner
 
@@ -14,14 +15,15 @@ class OllamaAdapter(BaseReasoner):
     """
 
     def __init__(self, base_url: str = OLLAMA_BASE_URL, model: str = DEFAULT_OLLAMA_MODEL):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = validate_ollama_url(base_url, strict_mode=OFFLINE_STRICT_MODE).rstrip("/")
         self.model = model
         self.fallback = LocalReasoner()
 
     def is_available(self) -> bool:
         """Check if local Ollama daemon is running on localhost."""
         try:
-            req = urllib.request.Request(f"{self.base_url}/api/tags", headers={"User-Agent": "Cognito-Local"})
+            validated_url = validate_ollama_url(self.base_url, strict_mode=OFFLINE_STRICT_MODE).rstrip("/")
+            req = urllib.request.Request(f"{validated_url}/api/tags", headers={"User-Agent": "Cognito-Local"})
             with urllib.request.urlopen(req, timeout=1.0) as resp:
                 return resp.status == 200
         except Exception:
@@ -29,6 +31,11 @@ class OllamaAdapter(BaseReasoner):
 
     def _query_ollama(self, prompt: str, system: Optional[str] = None) -> Optional[str]:
         """Send generation request to local Ollama instance."""
+        try:
+            validated_url = validate_ollama_url(self.base_url, strict_mode=OFFLINE_STRICT_MODE).rstrip("/")
+        except ValueError:
+            return None
+
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -39,7 +46,7 @@ class OllamaAdapter(BaseReasoner):
 
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            f"{self.base_url}/api/generate",
+            f"{validated_url}/api/generate",
             data=data,
             headers={"Content-Type": "application/json"}
         )

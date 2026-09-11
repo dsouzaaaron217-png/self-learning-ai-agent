@@ -18,10 +18,13 @@ def get_reasoner(engine_type: Optional[str] = None) -> BaseReasoner:
     if engine_type == "ollama":
         url = SettingsModel.get("ollama_url", "http://127.0.0.1:11434")
         model = SettingsModel.get("ollama_model", "llama3.2:3b")
-        adapter = OllamaAdapter(base_url=url, model=model)
-        if adapter.is_available():
-            return adapter
-        # Seamless fallback if Ollama is not active
+        try:
+            adapter = OllamaAdapter(base_url=url, model=model)
+            if adapter.is_available():
+                return adapter
+        except ValueError:
+            pass
+        # Seamless fallback if Ollama is not active or URL is invalid
         return _local_reasoner_instance
 
     return _local_reasoner_instance

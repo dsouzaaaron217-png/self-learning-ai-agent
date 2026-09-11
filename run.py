@@ -8,18 +8,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.config import OFFLINE_STRICT_MODE, DB_PATH
+from app.security import validate_bind_host
 from app import create_app
 
 def enforce_offline_firewall():
     """
-    Guarantees 100% On-Device Operation.
-    Restricts external outbound socket connections. Only localhost is allowed.
+    Defense-in-depth guard restricting outbound socket lookups to localhost.
+    Note: Application-level monkey-patching, not an OS-level firewall.
     """
     if not OFFLINE_STRICT_MODE:
         return
 
     orig_getaddrinfo = socket.getaddrinfo
-    allowed_hosts = {'localhost', '127.0.0.1', '::1', '0.0.0.0'}
+    allowed_hosts = {'localhost', '127.0.0.1', '::1'}
 
     def offline_guarded_getaddrinfo(host, port, *args, **kwargs):
         if host not in allowed_hosts and not host.startswith('127.'):
@@ -30,7 +31,7 @@ def enforce_offline_firewall():
         return orig_getaddrinfo(host, port, *args, **kwargs)
 
     socket.getaddrinfo = offline_guarded_getaddrinfo
-    print("[COGNITO SECURITY] Offline Firewall Active: External network calls strictly blocked.")
+    print("[COGNITO SECURITY] Offline Network Guard (defense-in-depth): Outbound socket lookups restricted to localhost.")
 
 def main():
     parser = argparse.ArgumentParser(description="Cognito Offline Self-Learning Personal Productivity Agent")
@@ -39,7 +40,20 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
     args = parser.parse_args()
 
-    # Enforce strict offline execution
+    # Validate bind host in strict offline mode
+    try:
+        validated_host = validate_bind_host(args.host, strict_mode=OFFLINE_STRICT_MODE)
+    except ValueError as e:
+        print(f"\n[COGNITO SECURITY ERROR] {e}\n", file=sys.stderr)
+        print(
+            "[COGNITO SECURITY] In strict offline mode (OFFLINE_STRICT_MODE=True), "
+            "binding to 0.0.0.0, LAN, or public interfaces is strictly prohibited to prevent external network exposure. "
+            "The server must bind exclusively to loopback (127.0.0.1, localhost, or ::1).\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Enforce strict offline execution (defense-in-depth)
     enforce_offline_firewall()
 
     app = create_app()
