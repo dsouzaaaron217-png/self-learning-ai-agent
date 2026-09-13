@@ -60,14 +60,30 @@ def export_backup():
         headers={"Content-Disposition": f"attachment;filename={filename}"}
     )
 
+from app.validation import parse_and_validate_json, ALLOWED_SETTINGS_KEYS
+
 @api_backup_bp.route("/backup/import", methods=["POST"])
 def import_backup():
     """Restores data from a JSON backup file and rebuilds vector store."""
-    data = request.get_json()
-    if not data or "data" not in data:
-        return jsonify({"success": False, "error": "Invalid backup file format"}), 400
+    try:
+        data = parse_and_validate_json(request)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    if "data" not in data or not isinstance(data["data"], dict):
+        return jsonify({"success": False, "error": "Invalid backup file format. Expected a 'data' dictionary."}), 400
 
     payload_data = data["data"]
+
+    # Prevent accidental huge backup payloads
+    max_items = 5000
+    for entity in ("tasks", "notes", "memories", "decision_logs", "feedback_events"):
+        if entity in payload_data:
+            if not isinstance(payload_data[entity], list):
+                return jsonify({"success": False, "error": f"Entity '{entity}' in backup must be a list."}), 400
+            if len(payload_data[entity]) > max_items:
+                return jsonify({"success": False, "error": f"Backup contains too many {entity} (max {max_items})."}), 400
+
     restored_counts = {}
 
     with get_db() as conn:
@@ -171,7 +187,24 @@ def get_settings():
 
 @api_backup_bp.route("/settings", methods=["POST"])
 def update_settings():
-    data = request.get_json() or {}
+    try:
+        data = parse_and_validate_json(request)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    # Strict check: only permitted settings keys
+    for key in data.keys():
+        if key not in ALLOWED_SETTINGS_KEYS:
+            return jsonify({
+                "success": False,
+                "error": f"Setting key '{key}' is not permitted. Allowed: {', '.join(sorted(ALLOWED_SETTINGS_KEYS))}."
+            }), 400
+
+    if "engine" in data:
+        engine = str(data["engine"]).strip().lower()
+        if engine not in {"local", "ollama"}:
+            return jsonify({"success": False, "error": "Invalid engine value. Must be 'local' or 'ollama'."}), 400
+        data["engine"] = engine
 
     # Validate Ollama URL using the centralized security validator
     if "ollama_url" in data:
@@ -187,4 +220,5 @@ def update_settings():
 
     for key, val in data.items():
         SettingsModel.set(key, str(val))
+
     return jsonify({"success": True, "settings": SettingsModel.get_all()})

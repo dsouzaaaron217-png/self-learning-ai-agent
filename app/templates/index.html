@@ -44,6 +44,9 @@
           <span class="engine-icon">⚡</span>
           <span id="activeEngineName">Local Reasoner</span>
         </div>
+        <button class="theme-toggle" id="logoutBtn" onclick="handleLogout()" title="Lock Cognito (Logout)" style="display:none;">
+          <span>🔒</span>
+        </button>
         <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle Dark/Light theme">
           <span id="themeIcon">🌙</span>
         </button>
@@ -596,6 +599,42 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('auditModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authentication Modal (Setup / Login) -->
+  <div class="modal-overlay" id="authModal" style="z-index: 1000;">
+    <div class="modal-box modal-compact">
+      <div class="modal-header">
+        <h3 class="modal-title" id="authModalTitle">🔒 Unlock Cognito</h3>
+      </div>
+      <div class="modal-body">
+        <div id="authNotice" class="card-desc" style="margin-bottom: 1rem;"></div>
+        <div id="authErrorMsg" class="hidden" style="color: var(--danger); font-size: 0.85rem; margin-bottom: 0.75rem;"></div>
+
+        <!-- Setup Form (First-run) -->
+        <div id="authSetupFields" class="hidden">
+          <div class="form-group">
+            <label>Create Master Password (min 8 chars) *</label>
+            <input type="password" id="authSetupPassword" class="form-control" placeholder="Enter new master password" onkeydown="handleAuthKeyDown(event)">
+          </div>
+          <div class="form-group">
+            <label>Confirm Master Password *</label>
+            <input type="password" id="authSetupConfirm" class="form-control" placeholder="Confirm password" onkeydown="handleAuthKeyDown(event)">
+          </div>
+        </div>
+
+        <!-- Login Form -->
+        <div id="authLoginFields">
+          <div class="form-group">
+            <label>Master Password *</label>
+            <input type="password" id="authLoginPassword" class="form-control" placeholder="Enter master password" onkeydown="handleAuthKeyDown(event)">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="authSubmitBtn" onclick="submitAuth()">Unlock</button>
       </div>
     </div>
   </div>

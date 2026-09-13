@@ -10,14 +10,42 @@ const AppState = {
   memories: [],
   metrics: null,
   settings: {},
-  viewMode: 'kanban'
+  viewMode: 'kanban',
+  authInitialized: false,
+  authenticated: false,
+  csrfToken: null
+};
+
+// Global Fetch Wrapper: Automatically attaches session credentials and X-CSRF-Token
+const _nativeFetch = window.fetch;
+window.fetch = async function(url, options = {}) {
+  options = options || {};
+  options.credentials = 'same-origin';
+  options.headers = options.headers || {};
+
+  if (AppState.csrfToken) {
+    if (options.headers instanceof Headers) {
+      options.headers.set('X-CSRF-Token', AppState.csrfToken);
+    } else {
+      options.headers['X-CSRF-Token'] = AppState.csrfToken;
+    }
+  }
+
+  const response = await _nativeFetch(url, options);
+
+  // If 401 Unauthorized and not an auth endpoint, trigger auth overlay
+  if (response.status === 401 && typeof url === 'string' && !url.includes('/api/auth/')) {
+    AppState.authenticated = false;
+    checkAuthStatus();
+  }
+  return response;
 };
 
 // Initialization
 document.addEventListener('DOMContentLoaded', () => {
   initTheme();
   initShortcuts();
-  loadAllData();
+  checkAuthStatus();
 });
 
 // Theme Management
@@ -191,5 +219,171 @@ function updateMetricsUI(metrics) {
   if (mDec) mDec.innerText = metrics.decisions.total;
   if (mDecBreakdown) {
     mDecBreakdown.innerText = `+${metrics.decisions.adds} Adds • ${metrics.decisions.updates} Updates • ${metrics.decisions.deletes} Deletes`;
+  }
+}
+
+// Authentication & Session Management
+async function checkAuthStatus() {
+  try {
+    const res = await _nativeFetch('/api/auth/status', { credentials: 'same-origin' });
+    const data = await res.json();
+    if (data.success) {
+      AppState.authInitialized = data.initialized;
+      AppState.authenticated = data.authenticated;
+      AppState.csrfToken = data.csrf_token;
+
+      const logoutBtn = document.getElementById('logoutBtn');
+
+      if (!AppState.authInitialized) {
+        showAuthModal('setup');
+        if (logoutBtn) logoutBtn.style.display = 'none';
+      } else if (!AppState.authenticated) {
+        showAuthModal('login');
+        if (logoutBtn) logoutBtn.style.display = 'none';
+      } else {
+        closeModal('authModal');
+        if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+        loadAllData();
+      }
+    }
+  } catch (err) {
+    console.error('Failed to check auth status', err);
+  }
+}
+
+function showAuthModal(mode) {
+  const title = document.getElementById('authModalTitle');
+  const notice = document.getElementById('authNotice');
+  const error = document.getElementById('authErrorMsg');
+  const setupFields = document.getElementById('authSetupFields');
+  const loginFields = document.getElementById('authLoginFields');
+  const submitBtn = document.getElementById('authSubmitBtn');
+
+  if (error) {
+    error.innerText = '';
+    error.classList.add('hidden');
+  }
+
+  if (mode === 'setup') {
+    if (title) title.innerText = '🔐 Cognito Setup — Create Master Password';
+    if (notice) notice.innerText = 'Welcome! Cognito runs 100% locally on your machine. Please set a master password to protect your personal productivity data and API from unauthorized local access.';
+    if (setupFields) setupFields.classList.remove('hidden');
+    if (loginFields) loginFields.classList.add('hidden');
+    if (submitBtn) submitBtn.innerText = 'Create Password & Unlock';
+    setTimeout(() => {
+      const p = document.getElementById('authSetupPassword');
+      if (p) p.focus();
+    }, 100);
+  } else {
+    if (title) title.innerText = '🔒 Unlock Cognito';
+    if (notice) notice.innerText = 'Please enter your master password to access your local workspace.';
+    if (setupFields) setupFields.classList.add('hidden');
+    if (loginFields) loginFields.classList.remove('hidden');
+    if (submitBtn) submitBtn.innerText = 'Unlock';
+    setTimeout(() => {
+      const p = document.getElementById('authLoginPassword');
+      if (p) p.focus();
+    }, 100);
+  }
+
+  openModal('authModal');
+}
+
+function handleAuthKeyDown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    submitAuth();
+  }
+}
+
+async function submitAuth() {
+  const error = document.getElementById('authErrorMsg');
+  if (error) {
+    error.innerText = '';
+    error.classList.add('hidden');
+  }
+
+  if (!AppState.authInitialized) {
+    const password = document.getElementById('authSetupPassword').value;
+    const confirm = document.getElementById('authSetupConfirm').value;
+
+    if (!password || password.length < 8) {
+      showAuthError('Password must be at least 8 characters long.');
+      return;
+    }
+    if (password !== confirm) {
+      showAuthError('Passwords do not match.');
+      return;
+    }
+
+    try {
+      const res = await _nativeFetch('/api/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, confirm_password: confirm })
+      });
+      const data = await res.json();
+      if (data.success) {
+        AppState.authInitialized = true;
+        AppState.authenticated = true;
+        AppState.csrfToken = data.csrf_token;
+        closeModal('authModal');
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+        showToast('Master password created! Cognito unlocked.', 'success');
+        loadAllData();
+      } else {
+        showAuthError(data.error || 'Setup failed.');
+      }
+    } catch (err) {
+      showAuthError('Connection error.');
+    }
+  } else {
+    const password = document.getElementById('authLoginPassword').value;
+    if (!password) {
+      showAuthError('Please enter your password.');
+      return;
+    }
+
+    try {
+      const res = await _nativeFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      const data = await res.json();
+      if (data.success) {
+        AppState.authenticated = true;
+        AppState.csrfToken = data.csrf_token;
+        closeModal('authModal');
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+        showToast('Cognito unlocked!', 'success');
+        loadAllData();
+      } else {
+        showAuthError(data.error || 'Invalid password.');
+      }
+    } catch (err) {
+      showAuthError('Connection error.');
+    }
+  }
+}
+
+function showAuthError(msg) {
+  const error = document.getElementById('authErrorMsg');
+  if (error) {
+    error.innerText = msg;
+    error.classList.remove('hidden');
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    AppState.authenticated = false;
+    showToast('Cognito locked.', 'info');
+    checkAuthStatus();
+  } catch (err) {
+    showToast('Logout failed.', 'error');
   }
 }

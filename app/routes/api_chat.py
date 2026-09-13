@@ -2,17 +2,17 @@ from flask import Blueprint, request, jsonify
 from app.vector_store import global_vector_store
 from app.models import TaskModel, NoteModel, MemoryModel
 from app.reasoning import get_reasoner
+from app.validation import parse_and_validate_json, validate_chat_input
 
 api_chat_bp = Blueprint("api_chat", __name__, url_prefix="/api/chat")
 
 @api_chat_bp.route("", methods=["POST"])
 def chat():
-    data = request.get_json() or {}
-    message = data.get("message", "").strip()
-    history = data.get("history", [])
-
-    if not message:
-        return jsonify({"success": False, "error": "Message is required"}), 400
+    try:
+        raw_data = parse_and_validate_json(request)
+        message, history = validate_chat_input(raw_data)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
     # Retrieve relevant memories and notes
     retrieved_mems = global_vector_store.search(message, doc_type="memory", limit=4)

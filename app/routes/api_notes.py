@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from app.models import NoteModel
 from app.vector_store import global_vector_store
 from app.memory.pipeline import MemoryPipeline
+from app.validation import parse_and_validate_json, validate_note_input
 
 api_notes_bp = Blueprint("api_notes", __name__, url_prefix="/api/notes")
 
@@ -12,17 +13,20 @@ def list_notes():
 
 @api_notes_bp.route("", methods=["POST"])
 def create_note():
-    data = request.get_json() or {}
-    title = data.get("title", "").strip()
-    content = data.get("content", "").strip()
-    if not title and not content:
-        return jsonify({"success": False, "error": "Note title or content is required"}), 400
+    try:
+        raw_data = parse_and_validate_json(request)
+        clean = validate_note_input(raw_data, is_update=False)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    title = clean.get("title")
+    content = clean.get("content", "")
 
     if not title:
         title = content[:40] + ("..." if len(content) > 40 else "")
 
-    tags = data.get("tags", "")
-    pinned = int(data.get("pinned", 0))
+    tags = clean.get("tags", "")
+    pinned = clean.get("pinned", 0)
 
     note_id = NoteModel.create(title=title, content=content, tags=tags, pinned=pinned)
 
@@ -65,8 +69,13 @@ def get_note(note_id):
 
 @api_notes_bp.route("/<int:note_id>", methods=["PUT"])
 def update_note(note_id):
-    data = request.get_json() or {}
-    success = NoteModel.update(note_id, **data)
+    try:
+        raw_data = parse_and_validate_json(request)
+        clean = validate_note_input(raw_data, is_update=True)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    success = NoteModel.update(note_id, **clean)
     if not success:
         return jsonify({"success": False, "error": "Note not found or invalid fields"}), 400
 

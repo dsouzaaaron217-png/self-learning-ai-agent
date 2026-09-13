@@ -132,11 +132,14 @@ class TestSettingsApiSecurity(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.test_db_path = Path(self.temp_dir.name) / "test_sec_api.db"
         self.test_vec_path = Path(self.temp_dir.name) / "test_sec_vec.json"
+        self.test_auth_path = Path(self.temp_dir.name) / "test_auth.json"
 
         self.p_db = patch("app.config.DB_PATH", self.test_db_path)
         self.p_vec = patch("app.config.VECTOR_STORE_PATH", self.test_vec_path)
+        self.p_auth = patch("app.auth.AUTH_FILE_PATH", self.test_auth_path)
         self.p_db.start()
         self.p_vec.start()
+        self.p_auth.start()
 
         from app import vector_store
         vector_store.global_vector_store = VectorStore(storage_path=self.test_vec_path)
@@ -145,7 +148,15 @@ class TestSettingsApiSecurity(unittest.TestCase):
         self.app = create_app()
         self.client = self.app.test_client()
 
+        # Set up auth and obtain CSRF token
+        setup_res = self.client.post("/api/auth/setup", json={
+            "password": "testpassword123",
+            "confirm_password": "testpassword123"
+        })
+        self.csrf_token = setup_res.get_json()["csrf_token"]
+
     def tearDown(self):
+        self.p_auth.stop()
         self.p_db.stop()
         self.p_vec.stop()
         self.temp_dir.cleanup()
@@ -160,7 +171,11 @@ class TestSettingsApiSecurity(unittest.TestCase):
         ]
         for url in remote_urls:
             with self.subTest(url=url):
-                res = self.client.post("/api/settings", json={"ollama_url": url})
+                res = self.client.post(
+                    "/api/settings",
+                    json={"ollama_url": url},
+                    headers={"X-CSRF-Token": self.csrf_token}
+                )
                 self.assertEqual(res.status_code, 400)
                 data = res.get_json()
                 self.assertFalse(data["success"])
@@ -174,7 +189,11 @@ class TestSettingsApiSecurity(unittest.TestCase):
         ]
         for url in valid_urls:
             with self.subTest(url=url):
-                res = self.client.post("/api/settings", json={"ollama_url": url})
+                res = self.client.post(
+                    "/api/settings",
+                    json={"ollama_url": url},
+                    headers={"X-CSRF-Token": self.csrf_token}
+                )
                 self.assertEqual(res.status_code, 200)
                 data = res.get_json()
                 self.assertTrue(data["success"])

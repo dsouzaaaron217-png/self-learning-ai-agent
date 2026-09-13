@@ -3,6 +3,12 @@ from app.models import TaskModel
 from app.vector_store import global_vector_store
 from app.reasoning import get_reasoner
 from app.memory.pipeline import MemoryPipeline
+from app.validation import (
+    parse_and_validate_json,
+    validate_task_input,
+    validate_feedback_input,
+    MAX_CHAT_MESSAGE_LEN
+)
 
 api_tasks_bp = Blueprint("api_tasks", __name__, url_prefix="/api/tasks")
 
@@ -15,15 +21,17 @@ def list_tasks():
 
 @api_tasks_bp.route("", methods=["POST"])
 def create_task():
-    data = request.get_json() or {}
-    title = data.get("title", "").strip()
-    if not title:
-        return jsonify({"success": False, "error": "Task title is required"}), 400
+    try:
+        raw_data = parse_and_validate_json(request)
+        clean = validate_task_input(raw_data, is_update=False)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
-    description = data.get("description", "").strip()
-    user_priority = data.get("priority")
-    due_date = data.get("due_date")
-    tags = data.get("tags", "")
+    title = clean["title"]
+    description = clean.get("description", "")
+    user_priority = clean.get("priority")
+    due_date = clean.get("due_date")
+    tags = clean.get("tags", "")
 
     # Retrieve relevant memories for task enhancement
     retrieved_mems = global_vector_store.search(f"{title} {description}", doc_type="memory", limit=4)
@@ -32,7 +40,7 @@ def create_task():
 
     # Use user priority if explicitly provided, else suggested priority
     final_priority = user_priority if user_priority in ('low', 'medium', 'high', 'urgent') else enhancement["suggested_priority"]
-    subtasks = data.get("subtasks") or enhancement["subtasks"]
+    subtasks = clean.get("subtasks") or enhancement["subtasks"]
 
     # AI context to track recommendation origin for feedback
     ai_context = {
@@ -70,13 +78,20 @@ def create_task():
 
 @api_tasks_bp.route("/quick-capture", methods=["POST"])
 def quick_capture():
-    data = request.get_json() or {}
-    text = data.get("text", "").strip()
-    if not text:
-        return jsonify({"success": False, "error": "Capture text is required"}), 400
+    try:
+        data = parse_and_validate_json(request)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"success": False, "error": "Capture text must be a non-empty string."}), 400
+    if len(text.strip()) > MAX_CHAT_MESSAGE_LEN:
+        return jsonify({"success": False, "error": f"Capture text exceeds maximum allowed length of {MAX_CHAT_MESSAGE_LEN} characters."}), 400
+
+    clean_text = text.strip()
     reasoner = get_reasoner()
-    parsed = reasoner.parse_quick_capture(text)
+    parsed = reasoner.parse_quick_capture(clean_text)
 
     # If classified as task
     if parsed["type"] == "task":
@@ -111,7 +126,7 @@ def quick_capture():
         )
 
         # Extract any latent habit/facts from the capture string
-        MemoryPipeline.extract_facts(text, context_type="task_capture")
+        MemoryPipeline.extract_facts(clean_text, context_type="task_capture")
 
         return jsonify({
             "success": True,
@@ -124,13 +139,13 @@ def quick_capture():
         from app.models import NoteModel
         note_id = NoteModel.create(
             title=parsed["title"][:50],
-            content=text,
+            content=clean_text,
             tags=parsed["tags"]
         )
         global_vector_store.index_document(
             doc_id=note_id,
             doc_type="note",
-            text=f"{parsed['title']} {text}"
+            text=f"{parsed['title']} {clean_text}"
         )
         return jsonify({
             "success": True,
@@ -147,8 +162,13 @@ def get_task(task_id):
 
 @api_tasks_bp.route("/<int:task_id>", methods=["PUT"])
 def update_task(task_id):
-    data = request.get_json() or {}
-    success = TaskModel.update(task_id, **data)
+    try:
+        raw_data = parse_and_validate_json(request)
+        clean = validate_task_input(raw_data, is_update=True)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    success = TaskModel.update(task_id, **clean)
     if not success:
         return jsonify({"success": False, "error": "Task not found or no valid fields to update"}), 400
 
@@ -176,9 +196,11 @@ def submit_feedback(task_id):
     Submits user feedback on an AI suggestion for this task.
     Actions: 'accepted' or 'corrected'.
     """
-    data = request.get_json() or {}
-    action = data.get("action")  # 'accepted' or 'corrected'
-    correction_text = data.get("correction", "")
+    try:
+        raw_data = parse_and_validate_json(request)
+        action, correction_text = validate_feedback_input(raw_data)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     
     task = TaskModel.get(task_id)
     if not task:
@@ -200,7 +222,7 @@ def submit_feedback(task_id):
 
     elif action == "corrected":
         if not correction_text:
-            return jsonify({"success": False, "error": "Correction details required"}), 400
+            return jsonify({"success": False, "error": "Correction details required."}), 400
 
         decision = MemoryPipeline.process_correction(
             item_id=task_id,

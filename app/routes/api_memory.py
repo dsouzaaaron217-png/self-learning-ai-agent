@@ -2,6 +2,11 @@ from flask import Blueprint, request, jsonify
 from app.models import MemoryModel, MemoryDecisionLogModel
 from app.memory.tracker import MemoryTracker
 from app.vector_store import global_vector_store
+from app.validation import (
+    parse_and_validate_json,
+    validate_memory_input,
+    validate_pagination_limit
+)
 
 api_memory_bp = Blueprint("api_memory", __name__, url_prefix="/api/memory")
 
@@ -34,13 +39,15 @@ def get_memory_with_history(memory_id):
 @api_memory_bp.route("", methods=["POST"])
 def manual_add_memory():
     """Manually add a learned habit or preference from the Transparency Dashboard."""
-    data = request.get_json() or {}
-    category = data.get("category", "preference")
-    content = data.get("content", "").strip()
-    confidence = float(data.get("confidence", 0.85))
+    try:
+        raw_data = parse_and_validate_json(request)
+        clean = validate_memory_input(raw_data, is_update=False)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
-    if not content:
-        return jsonify({"success": False, "error": "Memory content is required"}), 400
+    category = clean.get("category", "preference")
+    content = clean["content"]
+    confidence = clean.get("confidence", 0.85)
 
     new_id = MemoryModel.create(
         category=category,
@@ -74,10 +81,15 @@ def manual_update_memory(memory_id):
     if not mem:
         return jsonify({"success": False, "error": "Memory not found"}), 404
 
-    data = request.get_json() or {}
-    content = data.get("content", mem["content"]).strip()
-    category = data.get("category", mem["category"])
-    confidence = float(data.get("confidence", mem["confidence_weight"]))
+    try:
+        raw_data = parse_and_validate_json(request)
+        clean = validate_memory_input(raw_data, is_update=True)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    content = clean.get("content", mem["content"])
+    category = clean.get("category", mem["category"])
+    confidence = clean.get("confidence", mem["confidence_weight"])
 
     old_content = mem["content"]
     MemoryModel.update(
@@ -131,7 +143,11 @@ def manual_delete_memory(memory_id):
 @api_memory_bp.route("/decisions", methods=["GET"])
 def get_decision_audit_logs():
     """Retrieve the recent ADD/UPDATE/DELETE decisions for the audit trail."""
-    limit = int(request.args.get("limit", 40))
+    try:
+        limit = validate_pagination_limit(request.args.get("limit"), default=40)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
     logs = MemoryDecisionLogModel.get_recent(limit=limit)
     return jsonify({"success": True, "decisions": logs})
 

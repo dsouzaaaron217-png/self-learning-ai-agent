@@ -17,6 +17,8 @@ data/*.db
 data/*.sqlite
 data/*.sqlite3
 data/vector_store.json
+data/auth.json
+data/backups/
 
 # AI models
 models/

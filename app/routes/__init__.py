@@ -4,8 +4,10 @@ from app.routes.api_notes import api_notes_bp
 from app.routes.api_memory import api_memory_bp
 from app.routes.api_chat import api_chat_bp
 from app.routes.api_backup import api_backup_bp
+from app.routes.api_auth import api_auth_bp
 
 def register_blueprints(app: Flask):
+    app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_tasks_bp)
     app.register_blueprint(api_notes_bp)
     app.register_blueprint(api_memory_bp)

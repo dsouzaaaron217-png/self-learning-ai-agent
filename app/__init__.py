@@ -1,10 +1,10 @@
-import os
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify, session
 from app.config import OFFLINE_STRICT_MODE
 from app.database import init_db
 from app.models import MemoryModel, MemoryDecisionLogModel
 from app.memory.pipeline import MemoryPipeline
 from app.routes import register_blueprints
+from app.auth import get_or_create_secret_key, validate_csrf_token
 
 def create_app() -> Flask:
     """Application factory for Cognito Offline Agent."""
@@ -13,6 +13,13 @@ def create_app() -> Flask:
         template_folder="templates",
         static_folder="static"
     )
+
+    # Session and Request Limits
+    app.secret_key = get_or_create_secret_key()
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = False  # Localhost HTTP
+    app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB payload limit
 
     # Initialize SQLite database and tables
     init_db()
@@ -25,6 +32,70 @@ def create_app() -> Flask:
 
     # Register API blueprints
     register_blueprints(app)
+
+    # Security Headers
+    @app.after_request
+    def apply_security_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none';"
+        )
+        return response
+
+    # API Authentication & CSRF Protection Hook
+    @app.before_request
+    def protect_api_routes():
+        if request.path.startswith("/api/"):
+            public_auth_paths = {"/api/auth/status", "/api/auth/setup", "/api/auth/login"}
+            if request.path not in public_auth_paths:
+                # 1. Authentication Check
+                if not session.get("authenticated"):
+                    return jsonify({"success": False, "error": "Authentication required"}), 401
+
+                # 2. CSRF Protection for state-changing methods
+                if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+                    submitted_token = request.headers.get("X-CSRF-Token")
+                    session_token = session.get("csrf_token")
+                    if not validate_csrf_token(session_token, submitted_token):
+                        return jsonify({"success": False, "error": "Invalid or missing CSRF token"}), 403
+
+    # Error Handlers
+    @app.errorhandler(400)
+    def bad_request(e):
+        return jsonify({"success": False, "error": getattr(e, "description", "Bad Request")}), 400
+
+    @app.errorhandler(401)
+    def unauthorized(e):
+        return jsonify({"success": False, "error": getattr(e, "description", "Authentication required")}), 401
+
+    @app.errorhandler(403)
+    def forbidden(e):
+        return jsonify({"success": False, "error": getattr(e, "description", "Forbidden")}), 403
+
+    @app.errorhandler(404)
+    def not_found(e):
+        if request.path.startswith("/api/"):
+            return jsonify({"success": False, "error": "Resource not found"}), 404
+        return "Not Found", 404
+
+    @app.errorhandler(413)
+    def payload_too_large(e):
+        return jsonify({"success": False, "error": "Request payload exceeds maximum allowed size (10 MB)"}), 413
+
+    @app.errorhandler(500)
+    def internal_error(e):
+        return jsonify({"success": False, "error": "Internal server error"}), 500
 
     @app.route("/")
     def index():
