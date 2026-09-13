@@ -11,6 +11,24 @@ from app.config import OFFLINE_STRICT_MODE, DB_PATH
 from app.security import validate_bind_host
 from app import create_app
 
+import ipaddress
+
+def is_loopback_host(host: str) -> bool:
+    """
+    Validates whether a target hostname or IP address is strictly a local loopback destination.
+    Uses ipaddress module rather than prefix heuristics to prevent prefix bypasses.
+    """
+    if not host or not isinstance(host, str):
+        return False
+    norm = host.strip("[]").lower()
+    if norm in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(norm)
+        return ip.is_loopback
+    except ValueError:
+        return False
+
 def enforce_offline_firewall():
     """
     Defense-in-depth guard restricting outbound socket lookups to localhost.
@@ -20,10 +38,9 @@ def enforce_offline_firewall():
         return
 
     orig_getaddrinfo = socket.getaddrinfo
-    allowed_hosts = {'localhost', '127.0.0.1', '::1'}
 
     def offline_guarded_getaddrinfo(host, port, *args, **kwargs):
-        if host not in allowed_hosts and not host.startswith('127.'):
+        if not is_loopback_host(host):
             raise ConnectionRefusedError(
                 f"[COGNITO OFFLINE SECURITY] Blocked external network request to '{host}:{port}'. "
                 f"Cognito is configured for 100% private, on-device operation with zero cloud calls."

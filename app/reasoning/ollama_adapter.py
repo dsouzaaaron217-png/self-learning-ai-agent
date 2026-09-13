@@ -18,13 +18,15 @@ class OllamaAdapter(BaseReasoner):
         self.base_url = validate_ollama_url(base_url, strict_mode=OFFLINE_STRICT_MODE).rstrip("/")
         self.model = model
         self.fallback = LocalReasoner()
+        # Explicit empty ProxyHandler prevents inheriting environment proxies (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def is_available(self) -> bool:
         """Check if local Ollama daemon is running on localhost."""
         try:
             validated_url = validate_ollama_url(self.base_url, strict_mode=OFFLINE_STRICT_MODE).rstrip("/")
             req = urllib.request.Request(f"{validated_url}/api/tags", headers={"User-Agent": "Cognito-Local"})
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
+            with self._opener.open(req, timeout=1.0) as resp:
                 return resp.status == 200
         except Exception:
             return False
@@ -51,7 +53,7 @@ class OllamaAdapter(BaseReasoner):
             headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=12.0) as resp:
+            with self._opener.open(req, timeout=12.0) as resp:
                 res_json = json.loads(resp.read().decode("utf-8"))
                 return res_json.get("response", "")
         except Exception:
