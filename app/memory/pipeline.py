@@ -1,7 +1,7 @@
 import re
 from typing import List, Dict, Any, Optional, Tuple
 from app.models import MemoryModel, MemoryDecisionLogModel, FeedbackModel
-from app.vector_store import global_vector_store
+from app import vector_store
 from app.config import (
     SIMILARITY_MATCH_THRESHOLD,
     CONTRADICTION_THRESHOLD,
@@ -94,7 +94,7 @@ class MemoryPipeline:
 
         for mem in existing_memories:
             # Query similarity via vector store
-            vec_search = global_vector_store.search(content, doc_type="memory", limit=3)
+            vec_search = vector_store.global_vector_store.search(content, doc_type="memory", limit=3)
             for hit in vec_search:
                 if hit["id"] == mem["id"] and hit["similarity"] > highest_sim:
                     highest_sim = hit["similarity"]
@@ -103,7 +103,7 @@ class MemoryPipeline:
         # Decision 1: DELETE
         if is_deletion and top_match and highest_sim >= CONTRADICTION_THRESHOLD:
             MemoryModel.update(top_match["id"], status="deleted")
-            global_vector_store.remove_document(top_match["id"], doc_type="memory")
+            vector_store.global_vector_store.remove_document(top_match["id"], doc_type="memory")
             
             MemoryDecisionLogModel.log(
                 memory_id=top_match["id"],
@@ -136,7 +136,7 @@ class MemoryPipeline:
             )
 
             # Re-index in vector store
-            global_vector_store.index_document(
+            vector_store.global_vector_store.index_document(
                 doc_id=old_id,
                 doc_type="memory",
                 text=content,
@@ -170,7 +170,7 @@ class MemoryPipeline:
         )
 
         # Index in vector store
-        global_vector_store.index_document(
+        vector_store.global_vector_store.index_document(
             doc_id=new_id,
             doc_type="memory",
             text=content,
@@ -265,15 +265,5 @@ class MemoryPipeline:
 
     @classmethod
     def initialize_default_vector_index(cls):
-        """Re-index all active memories and notes into vector store on startup."""
-        active_mems = MemoryModel.list_active()
-        for m in active_mems:
-            global_vector_store.index_document(
-                doc_id=m["id"],
-                doc_type="memory",
-                text=m["content"],
-                metadata={"category": m["category"], "confidence_weight": m["confidence_weight"]},
-                auto_rebuild=False
-            )
-        global_vector_store.rebuild_idf()
-        global_vector_store.save()
+        """Ensure vector store is populated and valid on startup, recovering from SQLite if needed."""
+        return vector_store.global_vector_store.ensure_valid_index()
