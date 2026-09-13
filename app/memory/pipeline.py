@@ -12,12 +12,39 @@ from app.config import (
     MIN_CONFIDENCE_WEIGHT
 )
 
+def normalize_statement(text: str) -> str:
+    """
+    Safely normalizes a statement for identical content matching:
+    lowercased, stripped, trailing punctuation removed, whitespace collapsed.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    cleaned = text.strip().lower()
+    cleaned = re.sub(r'[.?!;]+$', '', cleaned).strip()
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    return cleaned
+
 class MemoryPipeline:
     """
     Two-Phase Memory Writer:
     Phase 1: Interaction Summarization and Fact Extraction
-    Phase 2: Reconciliation (ADD, UPDATE, DELETE) with full provenance
+    Phase 2: Reconciliation (ADD, UPDATE, DELETE, NOOP) with full provenance
     """
+
+    @classmethod
+    def _sync_vector_confidence(cls, memory_id: int, new_weight: float):
+        """
+        Synchronizes updated confidence weight into the vector store document metadata.
+        Safely handles missing vector documents or persistence issues without corrupting SQLite.
+        """
+        try:
+            doc_key = f"memory_{memory_id}"
+            vs = vector_store.global_vector_store
+            if doc_key in vs.documents:
+                vs.documents[doc_key]["metadata"]["confidence_weight"] = round(new_weight, 4)
+                vs.save()
+        except Exception as e:
+            print(f"[MemoryPipeline] Vector synchronization failed for confidence on memory #{memory_id}: {e}. SQLite remains authoritative; will reconcile on next validation.")
 
     @classmethod
     def extract_facts(cls, text: str, context_type: str = "general") -> List[Dict[str, Any]]:
@@ -74,37 +101,85 @@ class MemoryPipeline:
 
     @classmethod
     def reconcile_memory(cls, category: str, content: str, confidence: float,
-                         source_context: str, triggered_by: str = "interaction") -> Dict[str, Any]:
+                          source_context: str, triggered_by: str = "interaction") -> Dict[str, Any]:
         """
         Phase 2: Compare candidate fact against existing memories and decide:
-        - ADD: Novel fact
+        - NOOP: Identical statement already active (idempotent confirmation)
         - UPDATE: Refines or contradicts an existing memory
         - DELETE: Invalidates an existing memory
+        - ADD: Novel fact
         """
-        # Search existing active memories for semantic similarity
         existing_memories = MemoryModel.list_active()
-        
+        vs = vector_store.global_vector_store
+
+        # 1. Idempotency check: Exact normalized match against existing active memories
+        norm_candidate = normalize_statement(content)
+        for mem in existing_memories:
+            if normalize_statement(mem["content"]) == norm_candidate:
+                return {
+                    "action": "NOOP",
+                    "memory_id": mem["id"],
+                    "content": mem["content"],
+                    "vector_synced": True,
+                    "reasoning": f"Identical active memory #{mem['id']} already exists; confirmed without duplicate creation."
+                }
+
         # If text indicates complete cancellation/removal of a previous rule
         is_deletion = any(neg in content.lower() for neg in [
             "don't do this anymore", "delete this rule", "stop suggesting", "no longer valid", "never suggest"
         ])
 
+        # 2. Pure semantic matching: Compute cosine similarity against all active memories once
         top_match: Optional[Dict[str, Any]] = None
         highest_sim = 0.0
 
-        for mem in existing_memories:
-            # Query similarity via vector store
-            vec_search = vector_store.global_vector_store.search(content, doc_type="memory", limit=3)
-            for hit in vec_search:
-                if hit["id"] == mem["id"] and hit["similarity"] > highest_sim:
-                    highest_sim = hit["similarity"]
+        query_tokens = vector_store.tokenize(content)
+        query_tf = vs._compute_tf(query_tokens)
+        query_vec = vs._vectorize_tf(query_tf)
+
+        # For cancellation queries, also vectorize the target rule content without meta-phrases
+        clean_query_vec = None
+        if is_deletion:
+            clean_content = re.sub(
+                r'(?i)\b(don\'t do this anymore|delete this rule|stop suggesting|no longer valid|never suggest)[:\s]*',
+                '',
+                content
+            ).strip()
+            if clean_content:
+                clean_tokens = vector_store.tokenize(clean_content)
+                clean_tf = vs._compute_tf(clean_tokens)
+                clean_query_vec = vs._vectorize_tf(clean_tf)
+
+        if (query_vec or clean_query_vec) and existing_memories:
+            for mem in existing_memories:
+                doc_key = f"memory_{mem['id']}"
+                if doc_key in vs.documents and vs.documents[doc_key].get("vector"):
+                    doc_vec = vs.documents[doc_key]["vector"]
+                else:
+                    mem_tokens = vector_store.tokenize(mem["content"])
+                    mem_tf = vs._compute_tf(mem_tokens)
+                    doc_vec = vs._vectorize_tf(mem_tf)
+
+                sim = vs.cosine_similarity(query_vec, doc_vec) if query_vec else 0.0
+                if clean_query_vec:
+                    clean_sim = vs.cosine_similarity(clean_query_vec, doc_vec)
+                    if clean_sim > sim:
+                        sim = clean_sim
+
+                if sim > highest_sim:
+                    highest_sim = sim
                     top_match = mem
 
-        # Decision 1: DELETE
+        # Decision 1: DELETE (Cancellation intent with similarity >= CONTRADICTION_THRESHOLD)
         if is_deletion and top_match and highest_sim >= CONTRADICTION_THRESHOLD:
             MemoryModel.update(top_match["id"], status="deleted")
-            vector_store.global_vector_store.remove_document(top_match["id"], doc_type="memory")
-            
+            vector_synced = True
+            try:
+                vs.remove_document(top_match["id"], doc_type="memory")
+            except Exception as e:
+                vector_synced = False
+                print(f"[MemoryPipeline] Vector synchronization failed for deleted memory #{top_match['id']}: {e}. SQLite remains authoritative; will reconcile on next validation.")
+
             MemoryDecisionLogModel.log(
                 memory_id=top_match["id"],
                 action="DELETE",
@@ -116,32 +191,45 @@ class MemoryPipeline:
             return {
                 "action": "DELETE",
                 "memory_id": top_match["id"],
+                "vector_synced": vector_synced,
                 "reasoning": "Memory invalidated and deactivated upon user command."
             }
 
         # Decision 2: UPDATE (Refinement or contradiction of existing memory)
-        if top_match and highest_sim >= CONTRADICTION_THRESHOLD:
+        # Uses CONTRADICTION_THRESHOLD (0.40) for explicit corrections and SIMILARITY_MATCH_THRESHOLD (0.45) for general updates
+        update_threshold = CONTRADICTION_THRESHOLD if (category == "correction" or "correction" in triggered_by) else SIMILARITY_MATCH_THRESHOLD
+        if top_match and highest_sim >= update_threshold:
             old_content = top_match["content"]
             old_id = top_match["id"]
             new_confidence = min(MAX_CONFIDENCE_WEIGHT, top_match["confidence_weight"] + 0.1)
             new_update_count = top_match["update_count"] + 1
 
-            # Update the existing memory record
+            # Bounded provenance context: strip prior nested update suffixes to avoid recursive concatenation
+            clean_source = re.sub(r'\s*\(Updated from:[\s\S]*?\)', '', source_context).strip()
+            snippet = old_content[:40] + ("..." if len(old_content) > 40 else "")
+            bounded_context = f"{clean_source} (Updated from: '{snippet}')" if clean_source else f"Updated from: '{snippet}'"
+
+            # Update SQLite
             MemoryModel.update(
                 old_id,
                 content=content,
                 confidence_weight=new_confidence,
                 update_count=new_update_count,
-                source_context=f"{source_context} (Updated from: '{old_content[:40]}...')"
+                source_context=bounded_context
             )
 
             # Re-index in vector store
-            vector_store.global_vector_store.index_document(
-                doc_id=old_id,
-                doc_type="memory",
-                text=content,
-                metadata={"category": category, "confidence_weight": new_confidence}
-            )
+            vector_synced = True
+            try:
+                vs.index_document(
+                    doc_id=old_id,
+                    doc_type="memory",
+                    text=content,
+                    metadata={"category": category, "confidence_weight": new_confidence}
+                )
+            except Exception as e:
+                vector_synced = False
+                print(f"[MemoryPipeline] Vector synchronization failed for updated memory #{old_id}: {e}. SQLite remains authoritative; will reconcile on next validation.")
 
             reasoning = f"Updated existing memory #{old_id} based on new feedback/correction (similarity: {highest_sim:.2f})."
             MemoryDecisionLogModel.log(
@@ -158,6 +246,7 @@ class MemoryPipeline:
                 "memory_id": old_id,
                 "previous_content": old_content,
                 "new_content": content,
+                "vector_synced": vector_synced,
                 "reasoning": reasoning
             }
 
@@ -170,12 +259,17 @@ class MemoryPipeline:
         )
 
         # Index in vector store
-        vector_store.global_vector_store.index_document(
-            doc_id=new_id,
-            doc_type="memory",
-            text=content,
-            metadata={"category": category, "confidence_weight": confidence}
-        )
+        vector_synced = True
+        try:
+            vs.index_document(
+                doc_id=new_id,
+                doc_type="memory",
+                text=content,
+                metadata={"category": category, "confidence_weight": confidence}
+            )
+        except Exception as e:
+            vector_synced = False
+            print(f"[MemoryPipeline] Vector synchronization failed for new memory #{new_id}: {e}. SQLite remains authoritative; will reconcile on next validation.")
 
         reasoning = f"Novel preference or habit identified. Initial confidence: {confidence:.2f}."
         MemoryDecisionLogModel.log(
@@ -191,6 +285,7 @@ class MemoryPipeline:
             "action": "ADD",
             "memory_id": new_id,
             "new_content": content,
+            "vector_synced": vector_synced,
             "reasoning": reasoning
         }
 
@@ -217,6 +312,7 @@ class MemoryPipeline:
             if applied_mem:
                 new_weight = max(MIN_CONFIDENCE_WEIGHT, applied_mem["confidence_weight"] - PENALTY_STEP)
                 MemoryModel.update(memory_id_applied, confidence_weight=new_weight)
+                cls._sync_vector_confidence(memory_id_applied, new_weight)
 
         # Formulate clean corrected rule
         clean_rule = user_correction.strip()
@@ -252,6 +348,7 @@ class MemoryPipeline:
             if applied_mem:
                 new_weight = min(MAX_CONFIDENCE_WEIGHT, applied_mem["confidence_weight"] + REINFORCEMENT_STEP)
                 MemoryModel.update(memory_id_applied, confidence_weight=new_weight)
+                cls._sync_vector_confidence(memory_id_applied, new_weight)
                 
                 # Log reinforcement
                 MemoryDecisionLogModel.log(

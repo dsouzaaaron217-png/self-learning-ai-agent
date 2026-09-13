@@ -326,6 +326,64 @@ class VectorStore:
         keys = self._get_expected_db_keys()
         return bool(keys)
 
+    def _check_db_content_sync(self) -> bool:
+        """
+        Check if the text content and metadata of documents in the vector store
+        match authoritative SQLite records.
+        Returns True if fully synchronized, False if any content or confidence has diverged.
+        """
+        try:
+            from app.database import get_db
+            with get_db() as conn:
+                cur = conn.cursor()
+                # 1. Check active memories
+                cur.execute("SELECT id, content, confidence_weight FROM memories WHERE status = 'active'")
+                for r in cur.fetchall():
+                    key = f"memory_{r[0]}"
+                    doc = self.documents.get(key)
+                    if not doc:
+                        return False
+                    if doc.get("text") != r[1]:
+                        return False
+                    doc_conf = doc.get("metadata", {}).get("confidence_weight", 0.70)
+                    db_conf = r[2] if r[2] is not None else 0.70
+                    if abs(float(doc_conf) - float(db_conf)) > 1e-4:
+                        return False
+
+                # 2. Check tasks
+                cur.execute("SELECT id, title, description, tags FROM tasks")
+                for r in cur.fetchall():
+                    key = f"task_{r[0]}"
+                    doc = self.documents.get(key)
+                    if not doc:
+                        return False
+                    parts = [r[1]]
+                    if r[2]:
+                        parts.append(r[2])
+                    if r[3]:
+                        parts.append(r[3])
+                    expected_text = " ".join(parts).strip()
+                    if doc.get("text") != expected_text:
+                        return False
+
+                # 3. Check notes
+                cur.execute("SELECT id, title, content, tags FROM notes")
+                for r in cur.fetchall():
+                    key = f"note_{r[0]}"
+                    doc = self.documents.get(key)
+                    if not doc:
+                        return False
+                    parts = [r[1], r[2]]
+                    if r[3]:
+                        parts.append(r[3])
+                    expected_text = "\n".join(parts).strip()
+                    if doc.get("text") != expected_text:
+                        return False
+
+                return True
+        except Exception:
+            return True
+
     def rebuild_from_db(self) -> int:
         """
         Deterministically rebuild the vector store from authoritative SQLite records.
@@ -400,6 +458,7 @@ class VectorStore:
         - If the storage file is missing, unreadable, or malformed, rebuilds from SQLite.
         - If the store is missing an authoritative SQLite record, rebuilds from SQLite.
         - If the store contains stale/extra vector documents not in SQLite, rebuilds from SQLite.
+        - If the store's text content or metadata has diverged from SQLite, rebuilds from SQLite.
         - If the store is valid and synchronized with SQLite (or both are empty), loads without rebuild.
         Returns True if a rebuild was performed, False if the existing index was valid and synchronized.
         """
@@ -415,12 +474,18 @@ class VectorStore:
 
         current_keys = set(self.documents.keys())
 
-        # Authoritative coverage check:
+        # 1. Authoritative key coverage check:
         # - Missing authoritative record: expected_keys - current_keys != empty
         # - Stale/extra vector documents: current_keys - expected_keys != empty
         # - Empty store when SQLite has records: current_keys != expected_keys
         # - Empty store when SQLite is empty: current_keys == expected_keys == set()
         if current_keys != expected_keys:
+            self.rebuild_from_db()
+            return True
+
+        # 2. Authoritative content synchronization check:
+        # Rebuild if document texts or confidence weights have diverged from SQLite
+        if not self._check_db_content_sync():
             self.rebuild_from_db()
             return True
 
