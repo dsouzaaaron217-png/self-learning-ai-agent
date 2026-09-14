@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, Response
 from app.database import get_db, utc_now_iso
 from app.models import TaskModel, NoteModel, MemoryModel, MemoryDecisionLogModel, FeedbackModel, SettingsModel
-from app.vector_store import global_vector_store
+from app import vector_store
 from app.reasoning.ollama_adapter import OllamaAdapter
 from app.config import OFFLINE_STRICT_MODE
 from app.security import validate_ollama_url
@@ -49,8 +49,8 @@ def export_backup():
         }
     }
 
-    serialized = json.dumps(backup_payload, ensure_ascii=False, indent=2)
-    checksum = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    from app.validation import compute_backup_checksum, validate_backup_payload
+    checksum = compute_backup_checksum(backup_payload["data"])
     backup_payload["checksum_sha256"] = checksum
 
     filename = f"cognito_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -60,106 +60,129 @@ def export_backup():
         headers={"Content-Disposition": f"attachment;filename={filename}"}
     )
 
-from app.validation import parse_and_validate_json, ALLOWED_SETTINGS_KEYS
+from app.validation import parse_and_validate_json, ALLOWED_SETTINGS_KEYS, validate_backup_payload
 
 @api_backup_bp.route("/backup/import", methods=["POST"])
 def import_backup():
     """Restores data from a JSON backup file and rebuilds vector store."""
     try:
         data = parse_and_validate_json(request)
+        validated_payload = validate_backup_payload(data)
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
 
-    if "data" not in data or not isinstance(data["data"], dict):
-        return jsonify({"success": False, "error": "Invalid backup file format. Expected a 'data' dictionary."}), 400
+    payload_data = validated_payload["data"]
 
-    payload_data = data["data"]
-
-    # Prevent accidental huge backup payloads
-    max_items = 5000
-    for entity in ("tasks", "notes", "memories", "decision_logs", "feedback_events"):
-        if entity in payload_data:
-            if not isinstance(payload_data[entity], list):
-                return jsonify({"success": False, "error": f"Entity '{entity}' in backup must be a list."}), 400
-            if len(payload_data[entity]) > max_items:
-                return jsonify({"success": False, "error": f"Backup contains too many {entity} (max {max_items})."}), 400
+    # Pre-restore safety snapshot of active SQLite database
+    from app.database_snapshot import create_snapshot
+    try:
+        create_snapshot()
+    except Exception as snap_err:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to create pre-restore safety snapshot: {snap_err}"
+        }), 500
 
     restored_counts = {}
 
-    with get_db() as conn:
-        cur = conn.cursor()
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("PRAGMA defer_foreign_keys = ON")
 
-        # Restore tasks
-        if "tasks" in payload_data:
-            cur.execute("DELETE FROM tasks")
-            for t in payload_data["tasks"]:
-                cur.execute("""
-                    INSERT INTO tasks (id, title, description, priority, status, tags, due_date, subtasks, ai_suggestion_context, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (t["id"], t["title"], t.get("description", ""), t.get("priority", "medium"),
-                      t.get("status", "todo"), t.get("tags", ""), t.get("due_date"),
-                      t.get("subtasks", "[]") if isinstance(t.get("subtasks"), str) else json.dumps(t.get("subtasks", [])),
-                      t.get("ai_suggestion_context") if isinstance(t.get("ai_suggestion_context"), str) else json.dumps(t.get("ai_suggestion_context")),
-                      t.get("created_at", utc_now_iso()), t.get("updated_at", utc_now_iso())))
-            restored_counts["tasks"] = len(payload_data["tasks"])
+            # Reverse dependency order deletion
+            if "feedback_events" in payload_data:
+                cur.execute("DELETE FROM feedback_events")
+            if "decision_logs" in payload_data:
+                cur.execute("DELETE FROM memory_decision_logs")
+            if "memories" in payload_data:
+                cur.execute("DELETE FROM memories")
+            if "notes" in payload_data:
+                cur.execute("DELETE FROM notes")
+            if "tasks" in payload_data:
+                cur.execute("DELETE FROM tasks")
 
-        # Restore notes
-        if "notes" in payload_data:
-            cur.execute("DELETE FROM notes")
-            for n in payload_data["notes"]:
-                cur.execute("""
-                    INSERT INTO notes (id, title, content, tags, pinned, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (n["id"], n["title"], n["content"], n.get("tags", ""), n.get("pinned", 0),
-                      n.get("created_at", utc_now_iso()), n.get("updated_at", utc_now_iso())))
-            restored_counts["notes"] = len(payload_data["notes"])
+            # Dependency order insertion
+            if "tasks" in payload_data:
+                for t in payload_data["tasks"]:
+                    cur.execute("""
+                        INSERT INTO tasks (id, title, description, priority, status, tags, due_date, subtasks, ai_suggestion_context, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (t["id"], t["title"], t.get("description", ""), t.get("priority", "medium"),
+                          t.get("status", "todo"), t.get("tags", ""), t.get("due_date"),
+                          t.get("subtasks", "[]") if isinstance(t.get("subtasks"), str) else json.dumps(t.get("subtasks", [])),
+                          t.get("ai_suggestion_context") if isinstance(t.get("ai_suggestion_context"), str) else (json.dumps(t.get("ai_suggestion_context")) if t.get("ai_suggestion_context") is not None else None),
+                          t.get("created_at", utc_now_iso()), t.get("updated_at", utc_now_iso())))
+                restored_counts["tasks"] = len(payload_data["tasks"])
 
-        # Restore memories
-        if "memories" in payload_data:
-            cur.execute("DELETE FROM memories")
-            for m in payload_data["memories"]:
-                cur.execute("""
-                    INSERT INTO memories (id, category, content, confidence_weight, status, source_context, superseded_by, update_count, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (m["id"], m["category"], m["content"], m.get("confidence_weight", 0.7),
-                      m.get("status", "active"), m.get("source_context", ""), m.get("superseded_by"),
-                      m.get("update_count", 0), m.get("created_at", utc_now_iso()), m.get("updated_at", utc_now_iso())))
-            restored_counts["memories"] = len(payload_data["memories"])
+            if "notes" in payload_data:
+                for n in payload_data["notes"]:
+                    cur.execute("""
+                        INSERT INTO notes (id, title, content, tags, pinned, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (n["id"], n["title"], n["content"], n.get("tags", ""), int(n.get("pinned", 0)),
+                          n.get("created_at", utc_now_iso()), n.get("updated_at", utc_now_iso())))
+                restored_counts["notes"] = len(payload_data["notes"])
 
-        # Restore decision logs
-        if "decision_logs" in payload_data:
-            cur.execute("DELETE FROM memory_decision_logs")
-            for l in payload_data["decision_logs"]:
-                cur.execute("""
-                    INSERT INTO memory_decision_logs (id, memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (l["id"], l["memory_id"], l["action"], l["reasoning"], l.get("previous_content"),
-                      l.get("new_content"), l.get("triggered_by", "system"), l["timestamp"]))
-            restored_counts["decision_logs"] = len(payload_data["decision_logs"])
+            if "memories" in payload_data:
+                for m in payload_data["memories"]:
+                    cur.execute("""
+                        INSERT INTO memories (id, category, content, confidence_weight, status, source_context, superseded_by, update_count, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (m["id"], m["category"], m["content"], float(m.get("confidence_weight", 0.7)),
+                          m.get("status", "active"), m.get("source_context", ""), m.get("superseded_by"),
+                          int(m.get("update_count", 0)), m.get("created_at", utc_now_iso()), m.get("updated_at", utc_now_iso())))
+                restored_counts["memories"] = len(payload_data["memories"])
 
-        # Restore feedback events
-        if "feedback_events" in payload_data:
-            cur.execute("DELETE FROM feedback_events")
-            for f in payload_data["feedback_events"]:
-                cur.execute("""
-                    INSERT INTO feedback_events (id, suggestion_type, item_id, memory_id_applied, original_suggestion, user_action, correction_detail, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (f["id"], f["suggestion_type"], f.get("item_id"), f.get("memory_id_applied"),
-                      f["original_suggestion"], f["user_action"], f.get("correction_detail"), f["timestamp"]))
-            restored_counts["feedback_events"] = len(payload_data["feedback_events"])
+            if "decision_logs" in payload_data:
+                for l in payload_data["decision_logs"]:
+                    cur.execute("""
+                        INSERT INTO memory_decision_logs (id, memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (l["id"], l["memory_id"], l["action"], l["reasoning"], l.get("previous_content"),
+                          l.get("new_content"), l.get("triggered_by", "system"), l["timestamp"]))
+                restored_counts["decision_logs"] = len(payload_data["decision_logs"])
 
-    # Rebuild vector store from restored items
-    global_vector_store.documents = {}
-    for m in MemoryModel.list_active():
-        global_vector_store.index_document(m["id"], "memory", m["content"], {"confidence_weight": m["confidence_weight"]}, auto_rebuild=False)
-    for n in NoteModel.list_all():
-        global_vector_store.index_document(n["id"], "note", f"{n['title']}\n{n['content']}", auto_rebuild=False)
-    for t in TaskModel.list_all():
-        global_vector_store.index_document(t["id"], "task", f"{t['title']} {t.get('description', '')}", auto_rebuild=False)
-    global_vector_store.rebuild_idf()
-    global_vector_store.save()
+            if "feedback_events" in payload_data:
+                for f in payload_data["feedback_events"]:
+                    cur.execute("""
+                        INSERT INTO feedback_events (id, suggestion_type, item_id, memory_id_applied, original_suggestion, user_action, correction_detail, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (f["id"], f["suggestion_type"], f.get("item_id"), f.get("memory_id_applied"),
+                          f["original_suggestion"], f["user_action"], f.get("correction_detail"), f["timestamp"]))
+                restored_counts["feedback_events"] = len(payload_data["feedback_events"])
 
-    return jsonify({"success": True, "restored": restored_counts})
+            if "settings" in payload_data:
+                for key, val in payload_data["settings"].items():
+                    cur.execute("""
+                        INSERT INTO settings (key, value) VALUES (?, ?)
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """, (key, str(val)))
+                restored_counts["settings"] = len(payload_data["settings"])
+
+    except Exception as db_err:
+        return jsonify({
+            "success": False,
+            "sqlite_restored": False,
+            "error": f"Database import transaction failed: {db_err}"
+        }), 500
+
+    # Vector store reconciliation via Phase 3B/3C mechanisms
+    vector_synced = True
+    try:
+        vector_store.global_vector_store.rebuild_from_db()
+        vector_store.global_vector_store.ensure_valid_index()
+    except Exception as vs_err:
+        vector_synced = False
+        print(f"[BackupImport] Warning: vector store synchronization failed post-import: {vs_err}. SQLite remains authoritative.")
+
+    return jsonify({
+        "success": vector_synced,
+        "sqlite_restored": True,
+        "vector_synced": vector_synced,
+        "restored": restored_counts,
+        "error": None if vector_synced else "SQLite imported successfully, but vector store synchronization failed."
+    }), 200
 
 @api_backup_bp.route("/settings", methods=["GET"])
 def get_settings():
