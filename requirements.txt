@@ -1,0 +1,8 @@
+# Core Web Framework
+Flask>=3.0.0
+Werkzeug>=3.0.0
+
+# Cryptography & Authenticated Encryption (Phase 3F)
+# Provides AES-256-GCM AEAD primitive not available in Python standard library.
+# Wheels can be pre-cached for 100% offline installation environments.
+cryptography>=41.0.0

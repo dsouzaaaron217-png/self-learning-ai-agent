@@ -8,12 +8,46 @@ from app import vector_store
 from app.reasoning.ollama_adapter import OllamaAdapter
 from app.config import OFFLINE_STRICT_MODE
 from app.security import validate_ollama_url
+from app.backup_crypto import (
+    encrypt_backup,
+    decrypt_backup,
+    is_encrypted_backup,
+    validate_passphrase,
+)
+from app.validation import (
+    compute_backup_checksum,
+    validate_backup_payload,
+    parse_and_validate_json,
+    ALLOWED_SETTINGS_KEYS,
+)
 
 api_backup_bp = Blueprint("api_backup", __name__, url_prefix="/api")
 
-@api_backup_bp.route("/backup/export", methods=["GET"])
+@api_backup_bp.route("/backup/export", methods=["GET", "POST"])
 def export_backup():
-    """Generates a comprehensive JSON backup of all user data and memory history."""
+    """
+    Generates a comprehensive JSON backup of all user data and memory history.
+    If a passphrase is provided, returns an AES-256-GCM encrypted envelope.
+    If no passphrase is provided and method is GET, returns an unencrypted Phase 3E backup (legacy).
+    """
+    passphrase = None
+    if request.is_json:
+        body = request.get_json(silent=True) or {}
+        passphrase = body.get("passphrase")
+    if not passphrase:
+        passphrase = request.headers.get("X-Backup-Passphrase")
+
+    if request.method == "POST" and not passphrase:
+        return jsonify({"success": False, "error": "Backup passphrase is required."}), 400
+
+    if passphrase is not None:
+        try:
+            clean_passphrase = validate_passphrase(passphrase, is_export=True)
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+    else:
+        clean_passphrase = None
+
     with get_db() as conn:
         cur = conn.cursor()
         
@@ -49,9 +83,17 @@ def export_backup():
         }
     }
 
-    from app.validation import compute_backup_checksum, validate_backup_payload
     checksum = compute_backup_checksum(backup_payload["data"])
     backup_payload["checksum_sha256"] = checksum
+
+    if clean_passphrase:
+        encrypted_envelope = encrypt_backup(backup_payload, clean_passphrase)
+        filename = f"cognito_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.enc.json"
+        return Response(
+            json.dumps(encrypted_envelope, ensure_ascii=False, indent=2),
+            mimetype="application/json",
+            headers={"Content-Disposition": f"attachment;filename={filename}"}
+        )
 
     filename = f"cognito_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     return Response(
@@ -60,20 +102,61 @@ def export_backup():
         headers={"Content-Disposition": f"attachment;filename={filename}"}
     )
 
-from app.validation import parse_and_validate_json, ALLOWED_SETTINGS_KEYS, validate_backup_payload
-
 @api_backup_bp.route("/backup/import", methods=["POST"])
 def import_backup():
-    """Restores data from a JSON backup file and rebuilds vector store."""
+    """
+    Restores data from an encrypted or legacy plaintext JSON backup file and rebuilds vector store.
+    Strict security ordering:
+    1. Parse and extract backup payload / envelope and passphrase.
+    2. If encrypted: validate envelope, derive key via scrypt, decrypt via AES-256-GCM.
+    3. Verify Phase 3E canonical checksum in memory.
+    4. Perform Phase 3E in-memory schema and foreign-key validation.
+    5. Only upon complete success, create Phase 3D pre-restore safety snapshot.
+    6. Execute atomic SQLite restore.
+    7. Execute derived vector store rebuild.
+    """
     try:
-        data = parse_and_validate_json(request)
-        validated_payload = validate_backup_payload(data)
+        raw_data = parse_and_validate_json(request)
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
 
+    # Extract backup payload and passphrase
+    if "backup" in raw_data and isinstance(raw_data["backup"], dict) and is_encrypted_backup(raw_data["backup"]):
+        envelope = raw_data["backup"]
+        passphrase = raw_data.get("passphrase") or request.headers.get("X-Backup-Passphrase")
+        is_encrypted = True
+    elif is_encrypted_backup(raw_data):
+        envelope = raw_data
+        passphrase = raw_data.get("passphrase") or request.headers.get("X-Backup-Passphrase")
+        is_encrypted = True
+    else:
+        envelope = None
+        passphrase = None
+        is_encrypted = False
+
+    warning = None
+    if is_encrypted:
+        if passphrase is None:
+            return jsonify({"success": False, "error": "Backup passphrase is required for encrypted backup."}), 400
+        try:
+            decrypted_payload = decrypt_backup(envelope, passphrase)
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+
+        try:
+            validated_payload = validate_backup_payload(decrypted_payload)
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+    else:
+        try:
+            validated_payload = validate_backup_payload(raw_data)
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+        warning = "Imported unencrypted legacy backup. For enhanced privacy, export and use encrypted backups."
+
     payload_data = validated_payload["data"]
 
-    # Pre-restore safety snapshot of active SQLite database
+    # Pre-restore safety snapshot of active SQLite database (only after decryption and validation succeed)
     from app.database_snapshot import create_snapshot
     try:
         create_snapshot()
@@ -181,6 +264,8 @@ def import_backup():
         "sqlite_restored": True,
         "vector_synced": vector_synced,
         "restored": restored_counts,
+        "is_encrypted": is_encrypted,
+        "warning": warning,
         "error": None if vector_synced else "SQLite imported successfully, but vector store synchronization failed."
     }), 200
 

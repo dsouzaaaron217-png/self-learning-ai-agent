@@ -361,21 +361,25 @@
             <!-- Backup & Export -->
             <div class="settings-card">
               <h3 class="card-title">Encrypted Data Vault & Backup</h3>
-              <p class="card-desc">Full ownership of your productivity records. Export or restore at any time.</p>
+              <p class="card-desc">Full ownership of your productivity records. Protected with AES-256-GCM authenticated encryption using your private backup passphrase.</p>
               
-              <div class="backup-actions">
-                <button class="btn btn-secondary" onclick="exportDataBackup()">
+              <div class="backup-actions" style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+                <button class="btn btn-primary" onclick="openBackupExportModal()">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  Export Local Backup (JSON)
+                  Export Encrypted Backup
                 </button>
                 
                 <div class="import-wrapper">
                   <label class="btn btn-secondary import-btn">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                     Restore from Backup
-                    <input type="file" id="backupFileInput" accept=".json" onchange="importDataBackup(event)" style="display:none;">
+                    <input type="file" id="backupFileInput" accept=".json,.enc.json" onchange="handleBackupFileSelect(event)" style="display:none;">
                   </label>
                 </div>
+
+                <button class="btn btn-secondary" onclick="exportPlaintextBackup()" title="Export unencrypted legacy JSON" style="font-size: 0.8rem; opacity: 0.75;">
+                  Export Plaintext (Legacy)
+                </button>
               </div>
             </div>
           </div>
@@ -635,6 +639,61 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" id="authSubmitBtn" onclick="submitAuth()">Unlock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backup Export Modal (Passphrase Setup) -->
+  <div class="modal-overlay" id="backupExportModal" style="z-index: 1000;">
+    <div class="modal-box modal-compact">
+      <div class="modal-header">
+        <h3 class="modal-title">🔒 Export Encrypted Backup</h3>
+        <button class="modal-close" onclick="closeModal('backupExportModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="card-desc" style="margin-bottom: 1rem;">
+          Your backup will be encrypted with <strong>AES-256-GCM</strong> using a key derived from this passphrase via <strong>scrypt</strong>.
+          Cognito never stores this passphrase. Keep it safe to restore in the future.
+        </p>
+        <div id="backupExportErrorMsg" class="hidden" style="color: var(--danger); font-size: 0.85rem; margin-bottom: 0.75rem;"></div>
+
+        <div class="form-group">
+          <label>Backup Passphrase (min 8 chars) *</label>
+          <input type="password" id="backupExportPassphrase" class="form-control" placeholder="Enter backup passphrase" onkeydown="handleBackupExportKeyDown(event)">
+        </div>
+        <div class="form-group">
+          <label>Confirm Passphrase *</label>
+          <input type="password" id="backupExportConfirm" class="form-control" placeholder="Confirm backup passphrase" onkeydown="handleBackupExportKeyDown(event)">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('backupExportModal')">Cancel</button>
+        <button class="btn btn-primary" id="backupExportSubmitBtn" onclick="submitBackupExport()">Export & Download</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backup Import Modal (Passphrase Decryption) -->
+  <div class="modal-overlay" id="backupImportModal" style="z-index: 1000;">
+    <div class="modal-box modal-compact">
+      <div class="modal-header">
+        <h3 class="modal-title">🔓 Decrypt & Restore Backup</h3>
+        <button class="modal-close" onclick="closeModal('backupImportModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="card-desc" style="margin-bottom: 1rem;">
+          This backup is encrypted with <strong>AES-256-GCM</strong>. Enter the passphrase you used when exporting to authenticate and restore.
+        </p>
+        <div id="backupImportErrorMsg" class="hidden" style="color: var(--danger); font-size: 0.85rem; margin-bottom: 0.75rem;"></div>
+
+        <div class="form-group">
+          <label>Backup Passphrase *</label>
+          <input type="password" id="backupImportPassphrase" class="form-control" placeholder="Enter backup passphrase" onkeydown="handleBackupImportKeyDown(event)">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('backupImportModal')">Cancel</button>
+        <button class="btn btn-primary" id="backupImportSubmitBtn" onclick="submitBackupImport()">Decrypt & Restore</button>
       </div>
     </div>
   </div>

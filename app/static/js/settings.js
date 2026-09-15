@@ -81,13 +81,114 @@ async function saveEngineSettings() {
   }
 }
 
-// DATA VAULT BACKUP EXPORT & IMPORT (PRD §9)
-function exportDataBackup() {
-  window.location.href = '/api/backup/export';
-  showToast('📦 Encrypted local JSON backup generated & downloaded!', 'success');
+// DATA VAULT BACKUP EXPORT & IMPORT (Phase 3F)
+let pendingImportBackup = null;
+
+function openBackupExportModal() {
+  const passEl = document.getElementById('backupExportPassphrase');
+  const confEl = document.getElementById('backupExportConfirm');
+  const errEl = document.getElementById('backupExportErrorMsg');
+  if (passEl) passEl.value = '';
+  if (confEl) confEl.value = '';
+  if (errEl) {
+    errEl.textContent = '';
+    errEl.classList.add('hidden');
+  }
+  openModal('backupExportModal');
+  if (passEl) passEl.focus();
 }
 
-async function importDataBackup(e) {
+function handleBackupExportKeyDown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    submitBackupExport();
+  }
+}
+
+async function submitBackupExport() {
+  const passEl = document.getElementById('backupExportPassphrase');
+  const confEl = document.getElementById('backupExportConfirm');
+  const errEl = document.getElementById('backupExportErrorMsg');
+  const submitBtn = document.getElementById('backupExportSubmitBtn');
+
+  const passphrase = passEl ? passEl.value : '';
+  const confirmPass = confEl ? confEl.value : '';
+
+  if (!passphrase || passphrase.length < 8) {
+    if (errEl) {
+      errEl.textContent = 'Backup passphrase must be at least 8 characters.';
+      errEl.classList.remove('hidden');
+    }
+    return;
+  }
+  if (passphrase !== confirmPass) {
+    if (errEl) {
+      errEl.textContent = 'Passphrases do not match.';
+      errEl.classList.remove('hidden');
+    }
+    return;
+  }
+
+  if (errEl) errEl.classList.add('hidden');
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    const res = await fetch('/api/backup/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: passphrase })
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (errEl) {
+        errEl.textContent = data.error || 'Export failed.';
+        errEl.classList.remove('hidden');
+      }
+      return;
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/);
+    const filename = match ? match[1] : 'cognito_backup_encrypted.enc.json';
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+
+    if (passEl) passEl.value = '';
+    if (confEl) confEl.value = '';
+    closeModal('backupExportModal');
+    showToast('🔒 Encrypted backup generated & downloaded!', 'success');
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = 'Network or export error occurred.';
+      errEl.classList.remove('hidden');
+    }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+function exportPlaintextBackup() {
+  if (confirm('⚠️ Warning: Plaintext backups contain unencrypted personal productivity data (notes, tasks, memories). Are you sure you want to export an unencrypted backup?')) {
+    window.location.href = '/api/backup/export';
+    showToast('⚠️ Plaintext backup generated & downloaded.', 'warning');
+  }
+}
+
+// Backward compatibility alias
+function exportDataBackup() {
+  openBackupExportModal();
+}
+
+function handleBackupFileSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
 
@@ -95,30 +196,107 @@ async function importDataBackup(e) {
   reader.onload = async (event) => {
     try {
       const parsed = JSON.parse(event.target.result);
-      if (!parsed.data) {
-        showToast('Invalid backup file format', 'error');
-        return;
-      }
-
-      if (!confirm('Restoring will overwrite current items with this backup. Continue?')) {
-        return;
-      }
-
-      const res = await fetch('/api/backup/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed)
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast(`✓ Restored: ${data.restored.tasks || 0} tasks, ${data.restored.notes || 0} notes, ${data.restored.memories || 0} memories!`, 'success');
-        loadAllData();
+      if (parsed.format === 'cognito_backup_encrypted') {
+        pendingImportBackup = parsed;
+        const passEl = document.getElementById('backupImportPassphrase');
+        const errEl = document.getElementById('backupImportErrorMsg');
+        if (passEl) passEl.value = '';
+        if (errEl) {
+          errEl.textContent = '';
+          errEl.classList.add('hidden');
+        }
+        openModal('backupImportModal');
+        if (passEl) passEl.focus();
+      } else if (parsed.data) {
+        pendingImportBackup = null;
+        if (!confirm('⚠️ Restoring from an unencrypted legacy backup will overwrite current items with this backup. Continue?')) {
+          e.target.value = '';
+          return;
+        }
+        await executeBackupImport(parsed, null);
       } else {
-        showToast(data.error || 'Restore failed', 'error');
+        showToast('Invalid backup file format.', 'error');
       }
     } catch (err) {
-      showToast('Failed to parse backup JSON file', 'error');
+      showToast('Failed to parse backup JSON file.', 'error');
     }
+    e.target.value = '';
   };
   reader.readAsText(file);
+}
+
+// Backward compatibility alias
+function importDataBackup(e) {
+  handleBackupFileSelect(e);
+}
+
+function handleBackupImportKeyDown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    submitBackupImport();
+  }
+}
+
+async function submitBackupImport() {
+  const passEl = document.getElementById('backupImportPassphrase');
+  const errEl = document.getElementById('backupImportErrorMsg');
+  const passphrase = passEl ? passEl.value : '';
+
+  if (!passphrase) {
+    if (errEl) {
+      errEl.textContent = 'Please enter the backup passphrase.';
+      errEl.classList.remove('hidden');
+    }
+    return;
+  }
+
+  await executeBackupImport(pendingImportBackup, passphrase);
+}
+
+async function executeBackupImport(backupPayload, passphrase) {
+  const errEl = document.getElementById('backupImportErrorMsg');
+  const submitBtn = document.getElementById('backupImportSubmitBtn');
+  if (errEl) errEl.classList.add('hidden');
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    const body = { backup: backupPayload };
+    if (passphrase) {
+      body.passphrase = passphrase;
+    }
+
+    const res = await fetch('/api/backup/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      closeModal('backupImportModal');
+      const passEl = document.getElementById('backupImportPassphrase');
+      if (passEl) passEl.value = '';
+      pendingImportBackup = null;
+
+      if (data.warning) {
+        showToast(data.warning, 'warning');
+      }
+      showToast(`✓ Restored: ${data.restored.tasks || 0} tasks, ${data.restored.notes || 0} notes, ${data.restored.memories || 0} memories!`, 'success');
+      loadAllData();
+    } else {
+      if (errEl && !errEl.closest('.hidden')) {
+        errEl.textContent = data.error || 'Restore failed.';
+        errEl.classList.remove('hidden');
+      }
+      showToast(data.error || 'Restore failed', 'error');
+    }
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = 'Failed to connect to server.';
+      errEl.classList.remove('hidden');
+    }
+    showToast('Failed to execute restore', 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
 }

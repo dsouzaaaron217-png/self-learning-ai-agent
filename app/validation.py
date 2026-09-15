@@ -7,6 +7,14 @@ from flask import Request
 
 from app.config import OFFLINE_STRICT_MODE
 from app.security import validate_ollama_url
+from app.backup_crypto import (
+    is_encrypted_backup,
+    validate_passphrase,
+    validate_encrypted_envelope,
+    MIN_PASSPHRASE_LEN,
+    MAX_PASSPHRASE_LEN,
+    ENCRYPTED_BACKUP_FORMAT,
+)
 
 # Field limits
 MAX_TASK_TITLE_LEN = 200
