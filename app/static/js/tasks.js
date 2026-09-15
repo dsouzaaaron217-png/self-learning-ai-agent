@@ -116,13 +116,18 @@ function createTaskCard(task) {
         <div class="ai-chip-actions">
           <button class="btn-chip-accept" onclick="acceptTaskSuggestion(${task.id})">✓ Looks Good</button>
           <button class="btn-chip-correct" onclick="openCorrectionModal(${task.id})">✏️ Correct This</button>
+          <button class="btn-chip-reject" onclick="rejectTaskSuggestion(${task.id})" title="Dismiss suggestion">✕ Dismiss</button>
         </div>
       </div>
     `;
   } else if (aiCtx && aiCtx.user_accepted === true) {
     aiChipHtml = `<div style="font-size:0.7rem; color:var(--success); margin-top:3px;">✓ Preference reinforced</div>`;
   } else if (aiCtx && aiCtx.user_accepted === false) {
-    aiChipHtml = `<div style="font-size:0.7rem; color:var(--purple); margin-top:3px;">✏️ Adapted: ${escapeHtml(aiCtx.user_correction || 'Corrected')}</div>`;
+    if (aiCtx.user_correction) {
+      aiChipHtml = `<div style="font-size:0.7rem; color:var(--purple); margin-top:3px;">✏️ Adapted: ${escapeHtml(aiCtx.user_correction)}</div>`;
+    } else {
+      aiChipHtml = `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px;">✕ Suggestion dismissed</div>`;
+    }
   }
 
   card.innerHTML = `
@@ -216,6 +221,27 @@ async function acceptTaskSuggestion(taskId) {
       loadTasks();
       loadMemories();
       loadMetrics();
+    }
+  } catch (err) {
+    showToast('Failed to record feedback', 'error');
+  }
+}
+
+async function rejectTaskSuggestion(taskId) {
+  try {
+    const res = await fetch(`/api/tasks/${taskId}/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rejected' })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Suggestion dismissed.', 'info');
+      loadTasks();
+      loadMemories();
+      loadMetrics();
+    } else {
+      showToast(data.error || 'Failed to dismiss suggestion', 'error');
     }
   } catch (err) {
     showToast('Failed to record feedback', 'error');

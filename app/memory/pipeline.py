@@ -9,7 +9,8 @@ from app.config import (
     REINFORCEMENT_STEP,
     PENALTY_STEP,
     MAX_CONFIDENCE_WEIGHT,
-    MIN_CONFIDENCE_WEIGHT
+    MIN_CONFIDENCE_WEIGHT,
+    REJECTION_PENALTY_STEP
 )
 
 def normalize_statement(text: str) -> str:
@@ -358,6 +359,40 @@ class MemoryPipeline:
                     previous_content=applied_mem["content"],
                     new_content=applied_mem["content"],
                     triggered_by="feedback_acceptance"
+                )
+
+    @classmethod
+    def process_rejection(cls, item_id: Optional[int], original_suggestion: str,
+                          memory_id_applied: Optional[int] = None):
+        """
+        Records user rejection/dismissal of an AI suggestion.
+        Applies a mild confidence penalty (-0.10) to the applied memory if present,
+        never dropping below MIN_CONFIDENCE_WEIGHT.
+        Does NOT create a correction rule.
+        """
+        FeedbackModel.record(
+            suggestion_type="task_suggestion",
+            item_id=item_id,
+            memory_id_applied=memory_id_applied,
+            original_suggestion=original_suggestion,
+            user_action="rejected"
+        )
+
+        if memory_id_applied:
+            applied_mem = MemoryModel.get(memory_id_applied)
+            if applied_mem:
+                new_weight = max(MIN_CONFIDENCE_WEIGHT, round(applied_mem["confidence_weight"] - REJECTION_PENALTY_STEP, 4))
+                MemoryModel.update(memory_id_applied, confidence_weight=new_weight)
+                cls._sync_vector_confidence(memory_id_applied, new_weight)
+
+                # Log mild penalty
+                MemoryDecisionLogModel.log(
+                    memory_id=memory_id_applied,
+                    action="UPDATE",
+                    reasoning=f"Reduced confidence (-{REJECTION_PENALTY_STEP:.2f}) after user dismissed/rejected suggestion.",
+                    previous_content=applied_mem["content"],
+                    new_content=applied_mem["content"],
+                    triggered_by="feedback_rejection"
                 )
 
     @classmethod

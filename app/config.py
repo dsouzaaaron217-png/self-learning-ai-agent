@@ -40,3 +40,5 @@ REINFORCEMENT_STEP = 0.15          # Weight boost upon user acceptance
 PENALTY_STEP = 0.25                # Weight reduction upon user correction
 MAX_CONFIDENCE_WEIGHT = 1.0
 MIN_CONFIDENCE_WEIGHT = 0.1
+SUGGESTION_CONFIDENCE_FLOOR = 0.40  # Minimum confidence required to drive automated suggestions
+REJECTION_PENALTY_STEP = 0.10       # Mild weight reduction upon user suggestion dismissal/rejection

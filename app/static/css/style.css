@@ -673,6 +673,21 @@ body {
   border-color: var(--accent);
 }
 
+.btn-chip-reject {
+  background-color: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.btn-chip-reject:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 /* Subtasks */
 .subtasks-box {
   margin-top: 0.35rem;

@@ -125,14 +125,25 @@ def quick_capture():
             metadata={"priority": priority}
         )
 
-        # Extract any latent habit/facts from the capture string
-        MemoryPipeline.extract_facts(clean_text, context_type="task_capture")
+        # Extract and reconcile any latent habit/facts from the capture string
+        extracted_facts = MemoryPipeline.extract_facts(clean_text, context_type="task_capture")
+        learned_memories = []
+        for fact in extracted_facts:
+            decision = MemoryPipeline.reconcile_memory(
+                category=fact["category"],
+                content=fact["content"],
+                confidence=fact["confidence"],
+                source_context=f"Quick capture task #{task_id}",
+                triggered_by="task_capture"
+            )
+            learned_memories.append(decision)
 
         return jsonify({
             "success": True,
             "type": "task",
             "item": TaskModel.get(task_id),
-            "ai_suggestion": enhancement
+            "ai_suggestion": enhancement,
+            "learned_memories": learned_memories
         })
     else:
         # Save as note
@@ -147,10 +158,25 @@ def quick_capture():
             doc_type="note",
             text=f"{parsed['title']} {clean_text}"
         )
+
+        # Extract and reconcile any latent habit/facts from the capture string
+        extracted_facts = MemoryPipeline.extract_facts(clean_text, context_type="note_capture")
+        learned_memories = []
+        for fact in extracted_facts:
+            decision = MemoryPipeline.reconcile_memory(
+                category=fact["category"],
+                content=fact["content"],
+                confidence=fact["confidence"],
+                source_context=f"Quick capture note #{note_id}",
+                triggered_by="note_capture"
+            )
+            learned_memories.append(decision)
+
         return jsonify({
             "success": True,
             "type": "note",
-            "item": NoteModel.get(note_id)
+            "item": NoteModel.get(note_id),
+            "learned_memories": learned_memories
         })
 
 @api_tasks_bp.route("/<int:task_id>", methods=["GET"])
@@ -238,6 +264,19 @@ def submit_feedback(task_id):
             "success": True,
             "message": "Correction recorded and memory updated.",
             "decision": decision
+        })
+
+    elif action == "rejected":
+        MemoryPipeline.process_rejection(
+            item_id=task_id,
+            original_suggestion=orig_suggestion,
+            memory_id_applied=applied_mem_id
+        )
+        ai_ctx["user_accepted"] = False
+        TaskModel.update(task_id, ai_suggestion_context=ai_ctx)
+        return jsonify({
+            "success": True,
+            "message": "Suggestion dismissed and feedback recorded."
         })
 
     return jsonify({"success": False, "error": "Invalid feedback action"}), 400

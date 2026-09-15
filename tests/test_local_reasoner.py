@@ -51,5 +51,36 @@ class TestLocalReasoner(unittest.TestCase):
         )
         self.assertIn("Implement vector index", reply["reply"])
 
+    def test_confidence_floor_boundary(self):
+        # 0.39 should not drive suggestion
+        mem_39 = [{
+            "id": 1,
+            "text": "Security audit tasks are marked urgent priority.",
+            "metadata": {"confidence_weight": 0.39}
+        }]
+        res_39 = self.reasoner.suggest_task_enhancements("Security audit review", "", mem_39)
+        self.assertIsNone(res_39["applied_memory_id"])
+
+        # 0.40 should drive suggestion
+        mem_40 = [{
+            "id": 2,
+            "text": "Security audit tasks are marked urgent priority.",
+            "metadata": {"confidence_weight": 0.40}
+        }]
+        res_40 = self.reasoner.suggest_task_enhancements("Security audit review", "", mem_40)
+        self.assertEqual(res_40["applied_memory_id"], 2)
+        self.assertEqual(res_40["suggested_priority"], "urgent")
+
+    def test_generic_stop_words_no_false_positive(self):
+        mem = [{
+            "id": 5,
+            "text": "User prefers client presentation tasks are marked high priority.",
+            "metadata": {"confidence_weight": 0.90}
+        }]
+        # Generic word "tasks" alone must not match
+        res_generic = self.reasoner.suggest_task_enhancements("General documentation tasks", "Routine chores", mem)
+        self.assertIsNone(res_generic["applied_memory_id"])
+        self.assertEqual(res_generic["suggested_priority"], "medium")
+
 if __name__ == "__main__":
     unittest.main()

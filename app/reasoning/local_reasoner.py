@@ -1,7 +1,26 @@
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
+from app.config import SUGGESTION_CONFIDENCE_FLOOR
 from app.reasoning.base import BaseReasoner
+
+GENERIC_WORKFLOW_STOP_WORDS = {
+    "task", "tasks", "item", "items", "workflow", "work", "routine",
+    "marked", "priority", "user", "prefers", "always", "usually",
+    "with", "make", "will", "from", "that", "this",
+    "urgent", "critical", "high", "low", "medium", "should", "must",
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "by", "is", "are", "be"
+}
+
+def extract_meaningful_tokens(text: str) -> Set[str]:
+    """
+    Normalizes text into a set of distinct meaningful topic tokens.
+    Strips punctuation, lowercases, and filters out generic stop words.
+    """
+    if not text or not isinstance(text, str):
+        return set()
+    tokens = set(re.findall(r'\b[a-z0-9_]+\b', text.lower()))
+    return {t for t in tokens if len(t) > 2 and t not in GENERIC_WORKFLOW_STOP_WORDS}
 
 class LocalReasoner(BaseReasoner):
     """
@@ -81,40 +100,86 @@ class LocalReasoner(BaseReasoner):
         rationale = "Evaluated task context and standard workflow patterns."
 
         # 1. Check if any retrieved memory directly informs priority or workflow
+        task_topic_tokens = extract_meaningful_tokens(combined_text)
+        candidates = []
+
         for mem in retrieved_memories:
+            confidence = mem.get("metadata", {}).get("confidence_weight")
+            if confidence is None:
+                confidence = 0.70
+            try:
+                confidence = float(confidence)
+            except (ValueError, TypeError):
+                confidence = 0.70
+
+            # A. Confidence Floor: ignore memories below floor (0.40)
+            if confidence < SUGGESTION_CONFIDENCE_FLOOR:
+                continue
+
             mem_text = mem.get("text", "").lower()
-            confidence = mem.get("metadata", {}).get("confidence_weight", 0.7)
-            
-            # Check for priority rules in memory
+
+            # Determine target priority rule
+            target_priority = None
             if "urgent" in mem_text or "critical" in mem_text:
-                # Check if this task matches the memory topic
-                keywords = [w for w in mem_text.split() if len(w) > 3 and w not in ["user", "prefers", "always", "marked", "priority"]]
-                if any(kw in combined_text for kw in keywords):
-                    suggested_priority = "urgent"
-                    applied_memory = mem
-                    rationale = f"Applied learned habit (Confidence: {int(confidence*100)}%): '{mem.get('text')}'"
-                    break
+                target_priority = "urgent"
             elif "high priority" in mem_text or "high" in mem_text:
-                keywords = [w for w in mem_text.split() if len(w) > 3 and w not in ["user", "prefers", "always", "marked", "priority"]]
-                if any(kw in combined_text for kw in keywords):
-                    suggested_priority = "high"
-                    applied_memory = mem
-                    rationale = f"Applied learned habit (Confidence: {int(confidence*100)}%): '{mem.get('text')}'"
-                    break
+                target_priority = "high"
             elif "low priority" in mem_text or "low" in mem_text:
-                keywords = [w for w in mem_text.split() if len(w) > 3 and w not in ["user", "prefers", "always", "marked", "priority"]]
-                if any(kw in combined_text for kw in keywords):
-                    suggested_priority = "low"
-                    applied_memory = mem
-                    rationale = f"Applied learned habit (Confidence: {int(confidence*100)}%): '{mem.get('text')}'"
-                    break
+                target_priority = "low"
             elif "medium priority" in mem_text or "medium" in mem_text:
-                keywords = [w for w in mem_text.split() if len(w) > 3 and w not in ["user", "prefers", "always", "marked", "priority"]]
-                if any(kw in combined_text for kw in keywords):
-                    suggested_priority = "medium"
-                    applied_memory = mem
-                    rationale = f"Applied learned preference (Confidence: {int(confidence*100)}%): '{mem.get('text')}'"
-                    break
+                target_priority = "medium"
+
+            if not target_priority:
+                continue
+
+            # B. Meaningful Topic Overlap (require at least one non-generic topic token)
+            mem_topic_tokens = extract_meaningful_tokens(mem.get("text", ""))
+            overlap = mem_topic_tokens & task_topic_tokens
+            if not overlap:
+                continue
+
+            # Secondary recency factor
+            recency_val = 0.0
+            raw_ts = mem.get("timestamp") or mem.get("metadata", {}).get("timestamp")
+            if raw_ts:
+                try:
+                    recency_val = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    recency_val = 0.0
+
+            mem_id = mem.get("id", 0)
+            try:
+                mem_id_int = int(mem_id)
+            except (ValueError, TypeError):
+                mem_id_int = 0
+
+            candidates.append({
+                "mem": mem,
+                "target_priority": target_priority,
+                "confidence": confidence,
+                "overlap_count": len(overlap),
+                "recency": recency_val,
+                "id": mem_id_int
+            })
+
+        # C. Candidate Arbitration:
+        # Prefer stronger confidence first, then topic overlap count, then recency, with deterministic tie-breaker
+        if candidates:
+            candidates.sort(
+                key=lambda c: (
+                    round(c["confidence"], 4),
+                    c["overlap_count"],
+                    c["recency"],
+                    c["id"]
+                ),
+                reverse=True
+            )
+            best = candidates[0]
+            suggested_priority = best["target_priority"]
+            applied_memory = best["mem"]
+            conf_pct = int(round(best["confidence"] * 100))
+            category_label = applied_memory.get("metadata", {}).get("category", "habit").title()
+            rationale = f"Applied learned {category_label.lower()} (Confidence: {conf_pct}%): '{applied_memory.get('text')}'"
 
         # Fallback to heuristics if no memory match
         if not applied_memory:

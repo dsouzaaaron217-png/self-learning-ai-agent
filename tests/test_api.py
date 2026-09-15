@@ -50,6 +50,7 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["type"], "task")
         self.assertIn("Review pull request", data["item"]["title"])
+        self.assertIn("learned_memories", data)
 
     def test_feedback_loop_api(self):
         # 1. Create a task
@@ -86,6 +87,21 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(res_dec.status_code, 200)
         decs = res_dec.get_json()["decisions"]
         self.assertTrue(len(decs) > 0)
+
+        # 5. Reject suggestion on another task
+        res_t2 = self.client.post(
+            "/api/tasks",
+            json={"title": "Acme follow-up discussion"},
+            headers={"X-CSRF-Token": self.csrf_token}
+        )
+        t2_id = res_t2.get_json()["task"]["id"]
+        res_rej = self.client.post(
+            f"/api/tasks/{t2_id}/feedback",
+            json={"action": "rejected"},
+            headers={"X-CSRF-Token": self.csrf_token}
+        )
+        self.assertEqual(res_rej.status_code, 200)
+        self.assertTrue(res_rej.get_json()["success"])
 
     def test_backup_export_and_import(self):
         # Create a note
