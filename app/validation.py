@@ -396,11 +396,35 @@ def validate_task_input(data: Dict[str, Any], is_update: bool = False) -> Dict[s
         clean["tags"] = tags
 
     if "due_date" in data:
-        clean["due_date"] = data["due_date"]
+        dd = data["due_date"]
+        if dd is not None and dd != "":
+            if not isinstance(dd, str):
+                raise ValueError("Due date must be a string in YYYY-MM-DD format.")
+            dd_clean = dd.strip()
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', dd_clean):
+                raise ValueError("Due date must be in YYYY-MM-DD format.")
+            try:
+                datetime.strptime(dd_clean, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError(f"Due date '{dd_clean}' is not a valid calendar date.")
+            clean["due_date"] = dd_clean
+        else:
+            clean["due_date"] = None
 
     if "subtasks" in data and data["subtasks"] is not None:
         if not isinstance(data["subtasks"], list):
             raise ValueError("Subtasks must be a list.")
+        for idx, st in enumerate(data["subtasks"]):
+            if not isinstance(st, dict):
+                raise ValueError(f"Subtask #{idx} must be an object with 'title' and 'completed' fields.")
+            if set(st.keys()) - {"title", "completed"}:
+                raise ValueError(f"Subtask #{idx} contains unexpected fields. Only 'title' and 'completed' are allowed.")
+            st_title = st.get("title")
+            if not isinstance(st_title, str) or not st_title.strip():
+                raise ValueError(f"Subtask #{idx} must have a non-empty string 'title'.")
+            st_completed = st.get("completed")
+            if not isinstance(st_completed, bool):
+                raise ValueError(f"Subtask #{idx} 'completed' must be a boolean (true/false).")
         clean["subtasks"] = data["subtasks"]
 
     return clean

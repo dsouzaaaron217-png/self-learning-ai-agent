@@ -35,7 +35,9 @@ class TaskModel:
             return res
 
     @staticmethod
-    def list_all(status: Optional[str] = None, priority: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_all(status: Optional[str] = None, priority: Optional[str] = None,
+                 q: Optional[str] = None, tag: Optional[str] = None,
+                 due: Optional[str] = None) -> List[Dict[str, Any]]:
         query = "SELECT * FROM tasks"
         params = []
         conditions = []
@@ -45,6 +47,19 @@ class TaskModel:
         if priority:
             conditions.append("priority = ?")
             params.append(priority)
+        if q:
+            conditions.append("(title LIKE ? OR description LIKE ?)")
+            like_q = f"%{q}%"
+            params.extend([like_q, like_q])
+        if tag:
+            conditions.append("tags LIKE ?")
+            params.append(f"%{tag}%")
+        if due == "overdue":
+            conditions.append("due_date < date('now') AND due_date IS NOT NULL AND due_date != '' AND status != 'done'")
+        elif due == "today":
+            conditions.append("due_date = date('now') AND due_date IS NOT NULL AND due_date != ''")
+        elif due == "upcoming":
+            conditions.append("due_date > date('now') AND due_date IS NOT NULL AND due_date != ''")
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, id DESC"

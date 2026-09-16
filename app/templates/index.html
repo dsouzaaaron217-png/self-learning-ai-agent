@@ -126,6 +126,22 @@
             </div>
           </div>
 
+          <!-- Task Filter / Search Row -->
+          <div class="task-filter-row">
+            <div class="task-filter-search">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="taskSearchInput" placeholder="Search tasks..." oninput="applyTaskFilters()">
+            </div>
+            <input type="text" id="taskTagFilter" class="form-control task-filter-input" placeholder="Filter by tag..." oninput="applyTaskFilters()">
+            <select id="taskDueFilter" class="form-control task-filter-select" onchange="applyTaskFilters()">
+              <option value="">All due dates</option>
+              <option value="overdue">Overdue</option>
+              <option value="today">Due Today</option>
+              <option value="upcoming">Upcoming</option>
+            </select>
+            <button class="btn btn-secondary task-filter-clear" onclick="clearTaskFilters()" title="Clear all filters">✕ Clear</button>
+          </div>
+
           <!-- Kanban View -->
           <div class="kanban-board" id="kanbanBoard">
             <!-- Todo Column -->

@@ -1513,3 +1513,92 @@ body {
 .toast.info { border-left: 4px solid var(--accent); }
 
 .hidden { display: none !important; }
+
+/* ==========================================================================
+   PHASE 5C: TASK FILTER ROW & INDICATORS
+   ========================================================================== */
+.task-filter-row {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.task-filter-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.7rem;
+  flex: 1;
+  min-width: 160px;
+  max-width: 280px;
+}
+
+.task-filter-search input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  width: 100%;
+  font-family: inherit;
+}
+
+.task-filter-search svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.task-filter-input {
+  max-width: 160px;
+  font-size: 0.82rem !important;
+  padding: 0.4rem 0.6rem !important;
+}
+
+.task-filter-select {
+  max-width: 160px;
+  font-size: 0.82rem !important;
+  padding: 0.4rem 0.6rem !important;
+}
+
+.task-filter-clear {
+  font-size: 0.78rem !important;
+  padding: 0.35rem 0.65rem !important;
+  white-space: nowrap;
+}
+
+/* Overdue / Due-Today Indicators */
+.task-due-indicator {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.task-due-indicator.overdue {
+  background-color: var(--danger-subtle, rgba(248, 81, 73, 0.15));
+  color: var(--danger);
+}
+
+.task-due-indicator.due-today {
+  background-color: rgba(227, 179, 65, 0.15);
+  color: #e3b341;
+}
+
+/* Quick Mark Done Button */
+.btn-mark-done {
+  transition: var(--transition);
+}
+
+.btn-mark-done:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

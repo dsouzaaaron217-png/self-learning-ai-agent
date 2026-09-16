@@ -2,9 +2,19 @@
  * TASKS MANAGEMENT & FEEDBACK LOOP
  */
 
+let _taskFilterTimeout = null;
+
 async function loadTasks() {
   try {
-    const res = await fetch('/api/tasks');
+    const params = new URLSearchParams();
+    const q = document.getElementById('taskSearchInput')?.value.trim();
+    const tag = document.getElementById('taskTagFilter')?.value.trim();
+    const due = document.getElementById('taskDueFilter')?.value;
+    if (q) params.set('q', q);
+    if (tag) params.set('tag', tag);
+    if (due) params.set('due', due);
+    const qs = params.toString();
+    const res = await fetch('/api/tasks' + (qs ? '?' + qs : ''));
     const data = await res.json();
     if (data.success) {
       AppState.tasks = data.tasks;
@@ -15,6 +25,21 @@ async function loadTasks() {
   } catch (err) {
     console.error('Failed to load tasks', err);
   }
+}
+
+function applyTaskFilters() {
+  if (_taskFilterTimeout) clearTimeout(_taskFilterTimeout);
+  _taskFilterTimeout = setTimeout(() => loadTasks(), 250);
+}
+
+function clearTaskFilters() {
+  const searchEl = document.getElementById('taskSearchInput');
+  const tagEl = document.getElementById('taskTagFilter');
+  const dueEl = document.getElementById('taskDueFilter');
+  if (searchEl) searchEl.value = '';
+  if (tagEl) tagEl.value = '';
+  if (dueEl) dueEl.value = '';
+  loadTasks();
 }
 
 function setTaskView(mode) {
@@ -102,6 +127,21 @@ function createTaskCard(task) {
     `;
   }
 
+  // Due-date indicator: overdue (red) or due-today (amber)
+  let dueBadgeHtml = '';
+  if (task.due_date && task.status !== 'done') {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueParts = task.due_date.split('-');
+    const dueDate = new Date(parseInt(dueParts[0]), parseInt(dueParts[1]) - 1, parseInt(dueParts[2]));
+    dueDate.setHours(0, 0, 0, 0);
+    if (dueDate < today) {
+      dueBadgeHtml = `<span class="task-due-indicator overdue" title="Overdue">⚠ Overdue</span>`;
+    } else if (dueDate.getTime() === today.getTime()) {
+      dueBadgeHtml = `<span class="task-due-indicator due-today" title="Due today">📌 Due Today</span>`;
+    }
+  }
+
   // AI Suggestion Banner with Feedback Buttons
   let aiChipHtml = '';
   const aiCtx = task.ai_suggestion_context;
@@ -130,6 +170,11 @@ function createTaskCard(task) {
     }
   }
 
+  // Quick Mark Done button (only for non-done tasks)
+  const markDoneHtml = task.status !== 'done'
+    ? `<button class="btn-icon btn-mark-done" onclick="quickMarkDone(${task.id}, this)" title="Mark as Done">✅</button>`
+    : '';
+
   card.innerHTML = `
     <div class="task-card-header">
       <span class="task-title">${escapeHtml(task.title)}</span>
@@ -140,6 +185,7 @@ function createTaskCard(task) {
     ${aiChipHtml}
     <div class="task-meta">
       ${task.due_date ? `<span class="task-due">📅 ${task.due_date}</span>` : ''}
+      ${dueBadgeHtml}
       ${tagsHtml}
     </div>
     <div class="task-card-footer">
@@ -149,6 +195,7 @@ function createTaskCard(task) {
         <option value="done" ${task.status === 'done' ? 'selected' : ''}>Completed</option>
       </select>
       <div class="task-actions">
+        ${markDoneHtml}
         <button class="btn-icon" onclick="openEditTaskModal(${task.id})" title="Edit Task">✏️</button>
         <button class="btn-icon" onclick="deleteTaskItem(${task.id})" title="Delete Task">🗑️</button>
       </div>
@@ -204,6 +251,29 @@ async function deleteTaskItem(taskId) {
     }
   } catch (err) {
     showToast('Failed to delete task', 'error');
+  }
+}
+
+// Quick Mark Done
+async function quickMarkDone(taskId, btnEl) {
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const res = await fetch(`/api/tasks/${taskId}/mark-done`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✅ Task marked as done!', 'success');
+      loadTasks();
+      loadMetrics();
+    } else {
+      showToast(data.error || 'Failed to mark task done', 'error');
+      if (btnEl) btnEl.disabled = false;
+    }
+  } catch (err) {
+    showToast('Failed to mark task done', 'error');
+    if (btnEl) btnEl.disabled = false;
   }
 }
 

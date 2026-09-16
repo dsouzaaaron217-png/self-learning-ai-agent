@@ -16,7 +16,12 @@ api_tasks_bp = Blueprint("api_tasks", __name__, url_prefix="/api/tasks")
 def list_tasks():
     status = request.args.get("status")
     priority = request.args.get("priority")
-    tasks = TaskModel.list_all(status=status, priority=priority)
+    q = request.args.get("q", "").strip() or None
+    tag = request.args.get("tag", "").strip() or None
+    due = request.args.get("due", "").strip().lower() or None
+    if due and due not in ("overdue", "today", "upcoming"):
+        return jsonify({"success": False, "error": "Invalid due filter. Allowed: overdue, today, upcoming."}), 400
+    tasks = TaskModel.list_all(status=status, priority=priority, q=q, tag=tag, due=due)
     return jsonify({"success": True, "tasks": tasks})
 
 @api_tasks_bp.route("", methods=["POST"])
@@ -215,6 +220,18 @@ def delete_task(task_id):
         return jsonify({"success": False, "error": "Task not found"}), 404
     global_vector_store.remove_document(task_id, doc_type="task")
     return jsonify({"success": True, "message": "Task deleted"})
+
+@api_tasks_bp.route("/<int:task_id>/mark-done", methods=["POST"])
+def mark_task_done(task_id):
+    """Quick mark-done: sets task status to 'done'."""
+    task = TaskModel.get(task_id)
+    if not task:
+        return jsonify({"success": False, "error": "Task not found"}), 404
+    if task["status"] == "done":
+        return jsonify({"success": True, "task": task, "message": "Task is already completed."})
+    TaskModel.update(task_id, status="done")
+    updated = TaskModel.get(task_id)
+    return jsonify({"success": True, "task": updated, "message": "Task marked as done."})
 
 @api_tasks_bp.route("/<int:task_id>/feedback", methods=["POST"])
 def submit_feedback(task_id):
