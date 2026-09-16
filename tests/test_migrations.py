@@ -1,9 +1,9 @@
 """
-Unit tests for Cognito Phase 5A:
+Unit tests for Cognito Phase 5A & 5B:
 Database Schema Versioning and Migration Foundation.
 
 Covers:
-1. Fresh database initialization and table creation.
+1. Fresh database initialization and table creation (migrations 1 & 2).
 2. Existing populated database bootstrap without data loss.
 3. schema_migrations table structure and metadata.
 4. get_current_migration_version() reporting.
@@ -15,6 +15,7 @@ Covers:
 10. Idempotent re-initialization.
 11. Persistence across connection closure and restart.
 12. Database snapshot and restore compatibility with migration metadata.
+13. Migration 002 chat_messages schema, columns, and indexes.
 """
 
 import sqlite3
@@ -62,9 +63,9 @@ class TestDatabaseMigrations(unittest.TestCase):
             pass
 
     def test_01_fresh_db_initialization(self):
-        """Fresh database init runs migration 1 and creates all tables."""
+        """Fresh database init runs migrations in registry and creates all tables."""
         applied = init_db(self.db_path)
-        self.assertEqual(applied, [1])
+        self.assertEqual(applied, [1, 2])
 
         conn = sqlite3.connect(str(self.db_path))
         cur = conn.cursor()
@@ -81,9 +82,10 @@ class TestDatabaseMigrations(unittest.TestCase):
             "memory_decision_logs",
             "feedback_events",
             "settings",
+            "chat_messages",
         }
         self.assertTrue(expected_tables.issubset(tables))
-        self.assertEqual(ver, 1)
+        self.assertEqual(ver, 2)
 
     def test_02_existing_database_bootstrap_preserves_data(self):
         """Pre-existing populated database without schema_migrations bootstraps safely with zero data loss."""
@@ -193,7 +195,7 @@ class TestDatabaseMigrations(unittest.TestCase):
 
         # Run init_db on this populated database
         applied = init_db(self.db_path)
-        self.assertEqual(applied, [1])
+        self.assertEqual(applied, [1, 2])
 
         # Verify all data remains intact
         conn = sqlite3.connect(str(self.db_path))
@@ -226,10 +228,10 @@ class TestDatabaseMigrations(unittest.TestCase):
         self.assertIsNotNone(setting)
         self.assertEqual(setting["value"], "custom_val")
 
-        # Verify schema_migrations contains version 1
-        mig = cur.execute(f"SELECT * FROM {SCHEMA_MIGRATIONS_TABLE}").fetchall()
-        self.assertEqual(len(mig), 1)
-        self.assertEqual(mig[0]["version"], 1)
+        # Verify schema_migrations contains versions 1 and 2
+        mig = cur.execute(f"SELECT version FROM {SCHEMA_MIGRATIONS_TABLE} ORDER BY version ASC").fetchall()
+        self.assertEqual(len(mig), 2)
+        self.assertEqual([r["version"] for r in mig], [1, 2])
 
         conn.close()
 
@@ -257,8 +259,8 @@ class TestDatabaseMigrations(unittest.TestCase):
         self.assertEqual(get_current_migration_version(conn), 0)
 
         init_db(self.db_path)
-        self.assertEqual(get_current_migration_version(conn), 1)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 1)
+        self.assertEqual(get_current_migration_version(conn), 2)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 2)
         conn.close()
 
     def test_05_ascending_order_execution(self):
@@ -378,7 +380,7 @@ class TestDatabaseMigrations(unittest.TestCase):
     def test_10_idempotent_reinitialization(self):
         """Calling init_db multiple times is strictly safe and idempotent."""
         first = init_db(self.db_path)
-        self.assertEqual(first, [1])
+        self.assertEqual(first, [1, 2])
 
         second = init_db(self.db_path)
         self.assertEqual(second, [])
@@ -392,8 +394,8 @@ class TestDatabaseMigrations(unittest.TestCase):
 
         # Fresh connection to path
         fresh_conn = sqlite3.connect(str(self.db_path))
-        self.assertEqual(get_applied_migrations(fresh_conn), [1])
-        self.assertEqual(get_current_migration_version(fresh_conn), 1)
+        self.assertEqual(get_applied_migrations(fresh_conn), [1, 2])
+        self.assertEqual(get_current_migration_version(fresh_conn), 2)
         fresh_conn.close()
 
     def test_12_snapshot_and_backup_compatibility(self):
@@ -410,10 +412,10 @@ class TestDatabaseMigrations(unittest.TestCase):
         # Check snapshot contents
         snap_conn = sqlite3.connect(str(snap_path))
         cur = snap_conn.cursor()
-        cur.execute(f"SELECT version FROM {SCHEMA_MIGRATIONS_TABLE}")
+        cur.execute(f"SELECT version FROM {SCHEMA_MIGRATIONS_TABLE} ORDER BY version ASC")
         rows = cur.fetchall()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][0], 1)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([r[0] for r in rows], [1, 2])
         snap_conn.close()
 
         # Test restoring snapshot
@@ -425,7 +427,49 @@ class TestDatabaseMigrations(unittest.TestCase):
             restored_conn = sqlite3.connect(str(new_active))
             ver = get_current_migration_version(restored_conn)
             restored_conn.close()
-            self.assertEqual(ver, 1)
+            self.assertEqual(ver, 2)
+
+    def test_13_migration_002_chat_messages_schema_and_indexes(self):
+        """Migration 002 creates chat_messages table with expected columns and indexes."""
+        init_db(self.db_path)
+
+        conn = sqlite3.connect(str(self.db_path))
+        cur = conn.cursor()
+
+        # Verify table info
+        cur.execute("PRAGMA table_info(chat_messages)")
+        cols = {row[1]: {"type": row[2].upper(), "notnull": row[3], "pk": row[5]} for row in cur.fetchall()}
+
+        self.assertIn("id", cols)
+        self.assertEqual(cols["id"]["pk"], 1)
+
+        self.assertIn("session_id", cols)
+        self.assertEqual(cols["session_id"]["type"], "TEXT")
+        self.assertEqual(cols["session_id"]["notnull"], 1)
+
+        self.assertIn("role", cols)
+        self.assertEqual(cols["role"]["type"], "TEXT")
+        self.assertEqual(cols["role"]["notnull"], 1)
+
+        self.assertIn("content", cols)
+        self.assertEqual(cols["content"]["type"], "TEXT")
+        self.assertEqual(cols["content"]["notnull"], 1)
+
+        self.assertIn("cited_memories", cols)
+        self.assertEqual(cols["cited_memories"]["type"], "TEXT")
+
+        self.assertIn("created_at", cols)
+        self.assertEqual(cols["created_at"]["type"], "TEXT")
+        self.assertEqual(cols["created_at"]["notnull"], 1)
+
+        # Verify indexes
+        cur.execute("PRAGMA index_list(chat_messages)")
+        indexes = {row[1] for row in cur.fetchall()}
+        self.assertIn("idx_chat_messages_session_id", indexes)
+        self.assertIn("idx_chat_messages_created_at", indexes)
+        self.assertIn("idx_chat_messages_session_created", indexes)
+
+        conn.close()
 
 
 if __name__ == "__main__":

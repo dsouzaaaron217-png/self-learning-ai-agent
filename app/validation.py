@@ -1,4 +1,5 @@
 import json
+import re
 import hashlib
 import hmac
 from datetime import datetime
@@ -25,8 +26,12 @@ MAX_NOTE_CONTENT_LEN = 50000
 MAX_MEMORY_CONTENT_LEN = 1000
 MAX_CHAT_MESSAGE_LEN = 5000
 MAX_CHAT_HISTORY_ITEMS = 50
+MAX_SESSION_ID_LEN = 64
+MAX_CHAT_HISTORY_LIMIT = 200
 MAX_FEEDBACK_TEXT_LEN = 1000
 MAX_PAGINATION_LIMIT = 200
+
+ALLOWED_CHAT_ROLES = {"user", "assistant", "system"}
 
 ALLOWED_PRIORITIES = {"low", "medium", "high", "urgent"}
 ALLOWED_STATUSES = {"todo", "in_progress", "done"}
@@ -466,8 +471,59 @@ def validate_memory_input(data: Dict[str, Any], is_update: bool = False) -> Dict
 
     return clean
 
+def validate_chat_role(role: Any) -> str:
+    """Validates chat message role."""
+    if not isinstance(role, str):
+        raise ValueError("Chat role must be a string.")
+    clean = role.strip().lower()
+    if clean not in ALLOWED_CHAT_ROLES:
+        raise ValueError(f"Invalid chat role '{clean}'. Allowed: {', '.join(sorted(ALLOWED_CHAT_ROLES))}.")
+    return clean
+
+def validate_session_id(session_id: Any, default: str = "default") -> str:
+    """Validates chat session_id."""
+    if session_id is None:
+        return default
+    if not isinstance(session_id, str):
+        raise ValueError("session_id must be a string.")
+    clean = session_id.strip()
+    if not clean:
+        return default
+    if len(clean) > MAX_SESSION_ID_LEN:
+        raise ValueError(f"session_id exceeds maximum allowed length of {MAX_SESSION_ID_LEN} characters.")
+    if not re.match(r'^[a-zA-Z0-9_\-]+$', clean):
+        raise ValueError("session_id contains invalid characters. Allowed: alphanumeric, underscore, dash.")
+    return clean
+
+def validate_chat_content(content: Any) -> str:
+    """Validates chat message content."""
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Chat content must be a non-empty string.")
+    if len(content.strip()) > MAX_CHAT_MESSAGE_LEN:
+        raise ValueError(f"Chat content exceeds maximum allowed length of {MAX_CHAT_MESSAGE_LEN} characters.")
+    return content.strip()
+
+def validate_cited_memories(citations: Any) -> Optional[str]:
+    """Validates cited memories data structure and returns serialized JSON string or None."""
+    if citations is None:
+        return None
+    if isinstance(citations, str):
+        try:
+            parsed = json.loads(citations)
+            if not isinstance(parsed, list):
+                raise ValueError("cited_memories must represent a JSON list.")
+            return citations
+        except json.JSONDecodeError:
+            raise ValueError("cited_memories is not valid JSON.")
+    if isinstance(citations, list):
+        return json.dumps(citations)
+    raise ValueError("cited_memories must be a list or valid JSON string.")
+
 def validate_chat_input(data: Dict[str, Any]) -> Tuple[str, List[Dict[str, str]]]:
     """Validates user message and chat history for the copilot."""
+    if not isinstance(data, dict):
+        raise ValueError("Chat input must be a JSON object.")
+
     message = data.get("message")
     if not isinstance(message, str) or not message.strip():
         raise ValueError("Chat message must be a non-empty string.")

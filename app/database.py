@@ -7,7 +7,7 @@ from typing import Optional, List, Tuple, Callable, Union, Set
 from app import config
 
 SCHEMA_MIGRATIONS_TABLE = "schema_migrations"
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 def utc_now_iso() -> str:
     """Return current UTC timestamp in ISO 8601 format."""
@@ -162,8 +162,30 @@ def migration_001_baseline_schema(conn: sqlite3.Connection) -> None:
 
 MigrationRegistryEntry = Tuple[int, str, Callable[[sqlite3.Connection], None]]
 
+def migration_002_chat_messages(conn: sqlite3.Connection) -> None:
+    """
+    Migration 002: Chat messages persistence table and indexes (Phase 5B).
+    Creates chat_messages table and indexes for session_id and created_at.
+    Idempotent and safe for both fresh databases and existing populated databases.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            cited_memories TEXT DEFAULT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created ON chat_messages(session_id, created_at)")
+
 MIGRATIONS: List[MigrationRegistryEntry] = [
     (1, "baseline_schema", migration_001_baseline_schema),
+    (2, "chat_messages_table", migration_002_chat_messages),
 ]
 
 def apply_single_migration(

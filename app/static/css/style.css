@@ -1087,6 +1087,45 @@ body {
   border: 1px solid rgba(188,140,255,0.3);
 }
 
+.chat-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-action-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: var(--transition);
+}
+
+.chat-action-btn:hover:not(:disabled) {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.chat-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.chat-action-btn.action-success {
+  color: var(--success);
+  border-color: var(--success);
+  font-weight: 600;
+}
+
 .chat-input-row {
   display: flex;
   gap: 0.6rem;

@@ -101,6 +101,7 @@ function switchTab(tabId) {
   if (tabId === 'tasks') renderTasks();
   if (tabId === 'notes') renderNotes();
   if (tabId === 'memories') loadMemories();
+  if (tabId === 'chat' && typeof loadChatHistory === 'function') loadChatHistory();
   if (tabId === 'settings') loadSettings();
 }
 
@@ -184,7 +185,8 @@ async function loadAllData() {
     loadTasks(),
     loadNotes(),
     loadMemories(),
-    loadMetrics()
+    loadMetrics(),
+    typeof loadChatHistory === 'function' ? loadChatHistory() : Promise.resolve()
   ]);
 }
 

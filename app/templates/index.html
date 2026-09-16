@@ -256,8 +256,14 @@
               <h1 class="view-title">Offline AI Copilot</h1>
               <p class="view-subtitle">Private assistant grounded entirely on your on-device notes, tasks, and learned preferences.</p>
             </div>
-            <div class="chat-engine-status" id="chatEngineStatus">
-              <span>Reasoning: Local Engine</span>
+            <div class="view-actions" style="display: flex; align-items: center; gap: 0.75rem;">
+              <div class="chat-engine-status" id="chatEngineStatus">
+                <span>Reasoning: Local Engine</span>
+              </div>
+              <button class="btn btn-secondary" id="clearChatBtn" onclick="clearChatHistory()" title="Clear local chat history">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Clear History
+              </button>
             </div>
           </div>
 

@@ -335,3 +335,92 @@ class SettingsModel:
             cur = conn.cursor()
             cur.execute("SELECT key, value FROM settings")
             return {row[0]: row[1] for row in cur.fetchall()}
+
+
+class ChatMessageModel:
+    @staticmethod
+    def create(
+        session_id: str,
+        role: str,
+        content: str,
+        cited_memories: Optional[Any] = None,
+        created_at: Optional[str] = None
+    ) -> int:
+        now = created_at or utc_now_iso()
+        citations_json = None
+        if cited_memories is not None:
+            if isinstance(cited_memories, str):
+                citations_json = cited_memories
+            else:
+                citations_json = json.dumps(cited_memories)
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO chat_messages (session_id, role, content, cited_memories, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (session_id.strip(), role.strip().lower(), content.strip(), citations_json, now))
+            return cur.lastrowid
+
+    @staticmethod
+    def get(message_id: int) -> Optional[Dict[str, Any]]:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM chat_messages WHERE id = ?", (message_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            if res.get('cited_memories'):
+                try:
+                    res['cited_memories'] = json.loads(res['cited_memories'])
+                except Exception:
+                    pass
+            else:
+                res['cited_memories'] = []
+            return res
+
+    @staticmethod
+    def list_by_session(
+        session_id: str = "default",
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT * FROM chat_messages
+                WHERE session_id = ?
+                ORDER BY created_at ASC, id ASC
+                LIMIT ? OFFSET ?
+            """, (session_id.strip(), limit, offset))
+            rows = cur.fetchall()
+            messages = []
+            for row in rows:
+                m = dict(row)
+                if m.get('cited_memories'):
+                    try:
+                        m['cited_memories'] = json.loads(m['cited_memories'])
+                    except Exception:
+                        pass
+                else:
+                    m['cited_memories'] = []
+                messages.append(m)
+            return messages
+
+    @staticmethod
+    def clear_history(session_id: Optional[str] = None) -> int:
+        with get_db() as conn:
+            cur = conn.cursor()
+            if session_id:
+                cur.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id.strip(),))
+            else:
+                cur.execute("DELETE FROM chat_messages")
+            return cur.rowcount
+
+    @staticmethod
+    def delete(message_id: int) -> bool:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM chat_messages WHERE id = ?", (message_id,))
+            return cur.rowcount > 0
