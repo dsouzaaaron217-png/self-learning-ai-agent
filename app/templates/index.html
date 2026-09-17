@@ -250,6 +250,11 @@
               <div class="metric-val" id="metricTotalDecisions">0</div>
               <div class="metric-foot" id="metricDecisionBreakdown">Add &bull; Update &bull; Delete</div>
             </div>
+            <div class="metric-card">
+              <div class="metric-label">Rejection Rate</div>
+              <div class="metric-val text-warning" id="metricRejectionRate">0.0%</div>
+              <div class="metric-foot">Dismissed suggestions</div>
+            </div>
           </div>
 
           <!-- Filter Category Tabs -->
@@ -259,6 +264,7 @@
             <button class="filter-pill" data-category="preference" onclick="filterMemories('preference')">Preferences</button>
             <button class="filter-pill" data-category="correction" onclick="filterMemories('correction')">Corrections</button>
             <button class="filter-pill" data-category="fact" onclick="filterMemories('fact')">Facts</button>
+            <button class="filter-pill" data-category="superseded" onclick="filterMemories('superseded')">Superseded</button>
           </div>
 
           <!-- Memories List / Cards -->

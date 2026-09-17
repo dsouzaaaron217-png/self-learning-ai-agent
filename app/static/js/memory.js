@@ -20,11 +20,22 @@ async function loadMemories() {
   }
 }
 
-function filterMemories(category) {
+async function filterMemories(category) {
   activeMemoryFilter = category;
   document.querySelectorAll('.filter-pill').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.category === category);
   });
+  if (category === 'superseded') {
+    try {
+      const res = await fetch('/api/memory/superseded');
+      const data = await res.json();
+      if (data.success) {
+        AppState.supersededMemories = data.memories;
+      }
+    } catch (err) {
+      console.error('Failed to load superseded memories', err);
+    }
+  }
   renderMemories();
 }
 
@@ -33,26 +44,48 @@ function renderMemories() {
   if (!container) return;
   container.innerHTML = '';
 
-  const filtered = activeMemoryFilter === 'all'
-    ? AppState.memories
-    : AppState.memories.filter(m => m.category === activeMemoryFilter);
+  let list = [];
+  if (activeMemoryFilter === 'superseded') {
+    list = AppState.supersededMemories || [];
+  } else if (activeMemoryFilter === 'all') {
+    list = AppState.memories || [];
+  } else {
+    list = (AppState.memories || []).filter(m => m.category === activeMemoryFilter);
+  }
 
-  if (filtered.length === 0) {
-    container.innerHTML = '<div class="card-desc" style="text-align:center; padding: 2.5rem;">No memories in this category yet. As you use Cognito and correct suggestions, learned habits will appear here!</div>';
+  if (list.length === 0) {
+    const msg = activeMemoryFilter === 'superseded'
+      ? 'No superseded memories. Superseded rules and historical facts will appear here when corrections replace them.'
+      : 'No memories in this category yet. As you use Cognito and correct suggestions, learned habits will appear here!';
+    container.innerHTML = `<div class="card-desc" style="text-align:center; padding: 2.5rem;">${msg}</div>`;
     return;
   }
 
-  filtered.forEach(mem => {
+  list.forEach(mem => {
     const card = document.createElement('div');
-    card.className = 'memory-card';
+    card.className = 'memory-card' + (mem.status === 'superseded' ? ' memory-superseded' : '');
 
     const confPct = Math.round((mem.confidence_weight || 0.7) * 100);
     const updateCount = mem.update_count || 0;
+    const isSuperseded = mem.status === 'superseded';
+    const isFlagged = Boolean(mem.is_flagged);
+
+    let replacementHtml = '';
+    if (isSuperseded && mem.superseded_by) {
+      const replSnippet = mem.replacement_content ? `: "${escapeHtml(mem.replacement_content)}"` : '';
+      replacementHtml = `
+        <div class="memory-superseded-hint">
+          <span>↪ Superseded by Memory #${mem.superseded_by}${replSnippet}</span>
+        </div>
+      `;
+    }
 
     card.innerHTML = `
       <div class="memory-left">
         <div class="badge-row">
           <span class="cat-badge ${mem.category}">${mem.category}</span>
+          ${isSuperseded ? '<span class="superseded-badge">Superseded</span>' : ''}
+          ${isFlagged ? '<span class="flagged-badge">⚠️ Flagged Conflict</span>' : ''}
           <span class="conf-badge">Confidence: ${confPct}%</span>
           ${updateCount > 0 ? `<span class="update-badge">${updateCount} adaptation${updateCount > 1 ? 's' : ''}</span>` : ''}
         </div>
@@ -60,14 +93,17 @@ function renderMemories() {
         <div class="memory-provenance-hint">
           <span>Source: ${escapeHtml(mem.source_context || 'System initialization')}</span>
         </div>
+        ${replacementHtml}
       </div>
       <div class="memory-right">
         <button class="btn-why" onclick="openProvenanceModal(${mem.id})">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
           Why this exists
         </button>
-        <button class="btn-icon" onclick="openEditMemoryModal(${mem.id})" title="Edit Memory">✏️</button>
-        <button class="btn-icon" onclick="deleteMemoryItem(${mem.id})" title="Delete Memory">🗑️</button>
+        ${!isSuperseded ? `
+          <button class="btn-icon" onclick="openEditMemoryModal(${mem.id})" title="Edit Memory">✏️</button>
+          <button class="btn-icon" onclick="deleteMemoryItem(${mem.id})" title="Delete Memory">🗑️</button>
+        ` : ''}
       </div>
     `;
     container.appendChild(card);

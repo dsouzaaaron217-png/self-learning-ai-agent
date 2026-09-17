@@ -47,7 +47,7 @@ ALLOWED_SETTINGS_KEYS = {
 
 SUPPORTED_APPLICATION_NAME = "Cognito Offline Agent"
 ALLOWED_MEMORY_STATUSES = {"active", "superseded", "deleted"}
-ALLOWED_DECISION_ACTIONS = {"ADD", "UPDATE", "DELETE"}
+ALLOWED_DECISION_ACTIONS = {"ADD", "UPDATE", "DELETE", "SUPERSEDE", "FLAG_FOR_REVIEW"}
 ALLOWED_ENGINES = {"local", "ollama"}
 
 def compute_backup_checksum(data_subtree: Dict[str, Any]) -> str:

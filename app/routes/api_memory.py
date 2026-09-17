@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from app.models import MemoryModel, MemoryDecisionLogModel
+from app.models import MemoryModel, MemoryDecisionLogModel, FeedbackModel
 from app.memory.tracker import MemoryTracker
 from app.vector_store import global_vector_store
 from app.validation import (
@@ -156,3 +156,37 @@ def get_learning_metrics():
     """Get adaptation analytics, correction rate trends, and precision scores."""
     metrics = MemoryTracker.get_dashboard_metrics()
     return jsonify({"success": True, "metrics": metrics})
+
+@api_memory_bp.route("/superseded", methods=["GET"])
+def list_superseded_memories():
+    """Retrieve all superseded memories with relationship to their replacements."""
+    memories = MemoryModel.list_superseded()
+    return jsonify({"success": True, "memories": memories})
+
+@api_memory_bp.route("/search", methods=["GET"])
+def search_memories():
+    """Search memories across all or active statuses."""
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"success": False, "error": "Search query 'q' is required."}), 400
+
+    include_superseded = request.args.get("include_superseded", "").lower() in ("true", "1", "yes")
+    status = None if include_superseded else "active"
+    results = MemoryModel.search_all_statuses(q=q, status=status)
+    return jsonify({
+        "success": True,
+        "query": q,
+        "include_superseded": include_superseded,
+        "memories": results
+    })
+
+@api_memory_bp.route("/rejection-rate", methods=["GET"])
+def get_rejection_rate():
+    """Get dedicated transparent rejection-rate metric."""
+    metrics = FeedbackModel.get_metrics()
+    return jsonify({
+        "success": True,
+        "rejection_rate_percent": metrics.get("rejection_rate_percent", 0.0),
+        "rejected_count": metrics.get("rejected_count", 0),
+        "total_events": metrics.get("total_events", 0)
+    })

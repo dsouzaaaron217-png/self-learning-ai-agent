@@ -65,7 +65,7 @@ class TestDatabaseMigrations(unittest.TestCase):
     def test_01_fresh_db_initialization(self):
         """Fresh database init runs migrations in registry and creates all tables."""
         applied = init_db(self.db_path)
-        self.assertEqual(applied, [1, 2])
+        self.assertEqual(applied, [1, 2, 3])
 
         conn = sqlite3.connect(str(self.db_path))
         cur = conn.cursor()
@@ -85,7 +85,7 @@ class TestDatabaseMigrations(unittest.TestCase):
             "chat_messages",
         }
         self.assertTrue(expected_tables.issubset(tables))
-        self.assertEqual(ver, 2)
+        self.assertEqual(ver, 3)
 
     def test_02_existing_database_bootstrap_preserves_data(self):
         """Pre-existing populated database without schema_migrations bootstraps safely with zero data loss."""
@@ -195,7 +195,7 @@ class TestDatabaseMigrations(unittest.TestCase):
 
         # Run init_db on this populated database
         applied = init_db(self.db_path)
-        self.assertEqual(applied, [1, 2])
+        self.assertEqual(applied, [1, 2, 3])
 
         # Verify all data remains intact
         conn = sqlite3.connect(str(self.db_path))
@@ -228,10 +228,10 @@ class TestDatabaseMigrations(unittest.TestCase):
         self.assertIsNotNone(setting)
         self.assertEqual(setting["value"], "custom_val")
 
-        # Verify schema_migrations contains versions 1 and 2
+        # Verify schema_migrations contains versions 1, 2, and 3
         mig = cur.execute(f"SELECT version FROM {SCHEMA_MIGRATIONS_TABLE} ORDER BY version ASC").fetchall()
-        self.assertEqual(len(mig), 2)
-        self.assertEqual([r["version"] for r in mig], [1, 2])
+        self.assertEqual(len(mig), 3)
+        self.assertEqual([r["version"] for r in mig], [1, 2, 3])
 
         conn.close()
 
@@ -259,8 +259,8 @@ class TestDatabaseMigrations(unittest.TestCase):
         self.assertEqual(get_current_migration_version(conn), 0)
 
         init_db(self.db_path)
-        self.assertEqual(get_current_migration_version(conn), 2)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 2)
+        self.assertEqual(get_current_migration_version(conn), 3)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 3)
         conn.close()
 
     def test_05_ascending_order_execution(self):
@@ -380,7 +380,7 @@ class TestDatabaseMigrations(unittest.TestCase):
     def test_10_idempotent_reinitialization(self):
         """Calling init_db multiple times is strictly safe and idempotent."""
         first = init_db(self.db_path)
-        self.assertEqual(first, [1, 2])
+        self.assertEqual(first, [1, 2, 3])
 
         second = init_db(self.db_path)
         self.assertEqual(second, [])
@@ -394,8 +394,8 @@ class TestDatabaseMigrations(unittest.TestCase):
 
         # Fresh connection to path
         fresh_conn = sqlite3.connect(str(self.db_path))
-        self.assertEqual(get_applied_migrations(fresh_conn), [1, 2])
-        self.assertEqual(get_current_migration_version(fresh_conn), 2)
+        self.assertEqual(get_applied_migrations(fresh_conn), [1, 2, 3])
+        self.assertEqual(get_current_migration_version(fresh_conn), 3)
         fresh_conn.close()
 
     def test_12_snapshot_and_backup_compatibility(self):
@@ -414,8 +414,8 @@ class TestDatabaseMigrations(unittest.TestCase):
         cur = snap_conn.cursor()
         cur.execute(f"SELECT version FROM {SCHEMA_MIGRATIONS_TABLE} ORDER BY version ASC")
         rows = cur.fetchall()
-        self.assertEqual(len(rows), 2)
-        self.assertEqual([r[0] for r in rows], [1, 2])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([r[0] for r in rows], [1, 2, 3])
         snap_conn.close()
 
         # Test restoring snapshot
@@ -427,7 +427,7 @@ class TestDatabaseMigrations(unittest.TestCase):
             restored_conn = sqlite3.connect(str(new_active))
             ver = get_current_migration_version(restored_conn)
             restored_conn.close()
-            self.assertEqual(ver, 2)
+            self.assertEqual(ver, 3)
 
     def test_13_migration_002_chat_messages_schema_and_indexes(self):
         """Migration 002 creates chat_messages table with expected columns and indexes."""
@@ -469,6 +469,41 @@ class TestDatabaseMigrations(unittest.TestCase):
         self.assertIn("idx_chat_messages_created_at", indexes)
         self.assertIn("idx_chat_messages_session_created", indexes)
 
+        conn.close()
+
+    def test_14_migration_003_memory_lifecycle_schema(self):
+        """Migration 003 widens memory_decision_logs CHECK constraint to include SUPERSEDE and FLAG_FOR_REVIEW."""
+        init_db(self.db_path)
+
+        conn = sqlite3.connect(str(self.db_path))
+        cur = conn.cursor()
+
+        # Check table SQL definition
+        cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_decision_logs'")
+        tbl_sql = cur.fetchone()[0]
+        self.assertIn("SUPERSEDE", tbl_sql)
+        self.assertIn("FLAG_FOR_REVIEW", tbl_sql)
+
+        # Create a dummy memory to satisfy foreign key
+        cur.execute("""
+            INSERT INTO memories (category, content, confidence_weight, status, created_at, updated_at)
+            VALUES ('preference', 'Test preference', 0.8, 'active', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')
+        """)
+        mem_id = cur.lastrowid
+
+        # Confirm SUPERSEDE action can be inserted
+        cur.execute("""
+            INSERT INTO memory_decision_logs (memory_id, action, reasoning, timestamp)
+            VALUES (?, 'SUPERSEDE', 'Test supersede log', '2026-09-01T00:00:00Z')
+        """, (mem_id,))
+
+        # Confirm FLAG_FOR_REVIEW action can be inserted
+        cur.execute("""
+            INSERT INTO memory_decision_logs (memory_id, action, reasoning, timestamp)
+            VALUES (?, 'FLAG_FOR_REVIEW', 'Test flag log', '2026-09-01T00:00:00Z')
+        """, (mem_id,))
+
+        conn.commit()
         conn.close()
 
 

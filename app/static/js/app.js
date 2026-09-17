@@ -214,13 +214,21 @@ function updateMetricsUI(metrics) {
   const mPrec = document.getElementById('metricPrecision');
   const mDec = document.getElementById('metricTotalDecisions');
   const mDecBreakdown = document.getElementById('metricDecisionBreakdown');
+  const mRej = document.getElementById('metricRejectionRate');
 
   if (mActive) mActive.innerText = metrics.active_memories;
   if (mCorr) mCorr.innerText = `${metrics.feedback.correction_rate_percent}%`;
   if (mPrec) mPrec.innerText = `${metrics.memory_precision_percent}%`;
   if (mDec) mDec.innerText = metrics.decisions.total;
+  if (mRej) {
+    const rejRate = metrics.rejection_rate_percent !== undefined ? metrics.rejection_rate_percent : (metrics.feedback?.rejection_rate_percent || 0.0);
+    mRej.innerText = `${rejRate}%`;
+  }
   if (mDecBreakdown) {
-    mDecBreakdown.innerText = `+${metrics.decisions.adds} Adds • ${metrics.decisions.updates} Updates • ${metrics.decisions.deletes} Deletes`;
+    let breakdown = `+${metrics.decisions.adds} Adds • ${metrics.decisions.updates} Updates • ${metrics.decisions.deletes} Deletes`;
+    if (metrics.decisions.supersedes) breakdown += ` • ${metrics.decisions.supersedes} Superseded`;
+    if (metrics.decisions.flags_for_review) breakdown += ` • ${metrics.decisions.flags_for_review} Flagged`;
+    mDecBreakdown.innerText = breakdown;
   }
 }
 

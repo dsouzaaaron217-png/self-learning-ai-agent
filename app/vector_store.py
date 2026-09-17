@@ -402,7 +402,8 @@ class VectorStore:
                 text=m["content"],
                 metadata={
                     "category": m.get("category", "preference"),
-                    "confidence_weight": m.get("confidence_weight", 0.70)
+                    "confidence_weight": m.get("confidence_weight", 0.70),
+                    "flagged": bool(m.get("is_flagged"))
                 },
                 timestamp=m.get("updated_at") or m.get("created_at"),
                 auto_rebuild=False

@@ -88,7 +88,7 @@ class TestChatDatabaseMigration(unittest.TestCase):
         tbl = cur.fetchone()
         conn.close()
 
-        self.assertEqual(ver, 2)
+        self.assertEqual(ver, CURRENT_SCHEMA_VERSION)
         self.assertIsNotNone(tbl)
 
     def test_existing_db_v1_to_v2_migration(self):
@@ -111,14 +111,14 @@ class TestChatDatabaseMigration(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        # Run migrations - should discover migration 2 and apply it
+        # Run migrations - should discover migrations 2 and 3 and apply them
         applied = init_db(self.db_path)
-        self.assertEqual(applied, [2])
+        self.assertEqual(applied, [2, 3])
 
         conn = sqlite3.connect(str(self.db_path))
         ver = get_current_migration_version(conn)
         conn.close()
-        self.assertEqual(ver, 2)
+        self.assertEqual(ver, 3)
 
         # Verify old data is 100% preserved
         conn = sqlite3.connect(str(self.db_path))
@@ -151,7 +151,7 @@ class TestChatDatabaseMigration(unittest.TestCase):
             raise RuntimeError("Intentional failure")
 
         custom_registry = [
-            (3, "failing_migration", failing_mig)
+            (999, "failing_migration", failing_mig)
         ]
 
         init_db(self.db_path)
@@ -164,7 +164,7 @@ class TestChatDatabaseMigration(unittest.TestCase):
         cur = conn.cursor()
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='test_temp_table'")
         self.assertIsNone(cur.fetchone())
-        self.assertEqual(get_current_migration_version(conn), 2)
+        self.assertEqual(get_current_migration_version(conn), 3)
         conn.close()
 
     def test_chat_messages_schema_and_indexes(self):

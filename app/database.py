@@ -7,7 +7,7 @@ from typing import Optional, List, Tuple, Callable, Union, Set
 from app import config
 
 SCHEMA_MIGRATIONS_TABLE = "schema_migrations"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 def utc_now_iso() -> str:
     """Return current UTC timestamp in ISO 8601 format."""
@@ -183,9 +183,58 @@ def migration_002_chat_messages(conn: sqlite3.Connection) -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created ON chat_messages(session_id, created_at)")
 
+def migration_003_memory_lifecycle(conn: sqlite3.Connection) -> None:
+    """
+    Migration 003: Widen memory_decision_logs.action CHECK constraint
+    to include SUPERSEDE and FLAG_FOR_REVIEW actions (Phase 5E).
+
+    SQLite does not support ALTER TABLE ... ALTER COLUMN, so this uses
+    the table-rebuild strategy: create new table, copy data, drop old, rename.
+    Idempotent: checks if the constraint already allows SUPERSEDE before running.
+    """
+    cursor = conn.cursor()
+
+    # Idempotency check: see if SUPERSEDE is already allowed
+    cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_decision_logs'")
+    row = cursor.fetchone()
+    if row and row[0] and 'SUPERSEDE' in row[0]:
+        # Constraint already includes SUPERSEDE — nothing to do
+        return
+
+    # 1. Create new table with widened CHECK constraint
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS memory_decision_logs_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            action TEXT CHECK(action IN ('ADD', 'UPDATE', 'DELETE', 'SUPERSEDE', 'FLAG_FOR_REVIEW')) NOT NULL,
+            reasoning TEXT NOT NULL,
+            previous_content TEXT DEFAULT NULL,
+            new_content TEXT DEFAULT NULL,
+            triggered_by TEXT DEFAULT 'system',
+            timestamp TEXT NOT NULL
+        )
+    """)
+
+    # 2. Copy all existing rows preserving IDs and data
+    cursor.execute("""
+        INSERT INTO memory_decision_logs_new (id, memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
+        SELECT id, memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp
+        FROM memory_decision_logs
+    """)
+
+    # 3. Drop old table
+    cursor.execute("DROP TABLE memory_decision_logs")
+
+    # 4. Rename new table
+    cursor.execute("ALTER TABLE memory_decision_logs_new RENAME TO memory_decision_logs")
+
+    # 5. Recreate indexes
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_decision_logs_mem ON memory_decision_logs(memory_id)")
+
 MIGRATIONS: List[MigrationRegistryEntry] = [
     (1, "baseline_schema", migration_001_baseline_schema),
     (2, "chat_messages_table", migration_002_chat_messages),
+    (3, "memory_lifecycle_extensions", migration_003_memory_lifecycle),
 ]
 
 def apply_single_migration(

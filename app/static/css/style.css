@@ -1079,6 +1079,35 @@ body {
   gap: 0.35rem;
 }
 
+.superseded-badge {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background-color: var(--bg-elevated);
+  color: var(--text-muted);
+  border: 1px dashed var(--border-color);
+}
+
+.flagged-badge {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 700;
+  background-color: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.memory-superseded-hint {
+  font-size: 0.76rem;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
 .memory-right {
   display: flex;
   align-items: center;

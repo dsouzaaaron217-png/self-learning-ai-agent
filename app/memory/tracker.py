@@ -73,9 +73,12 @@ class MemoryTracker:
                     "total": total_decisions,
                     "adds": action_counts.get("ADD", 0),
                     "updates": action_counts.get("UPDATE", 0),
-                    "deletes": action_counts.get("DELETE", 0)
+                    "deletes": action_counts.get("DELETE", 0),
+                    "supersedes": action_counts.get("SUPERSEDE", 0),
+                    "flags_for_review": action_counts.get("FLAG_FOR_REVIEW", 0)
                 },
                 "feedback": feedback,
+                "rejection_rate_percent": feedback.get("rejection_rate_percent", 0.0),
                 "memory_precision_percent": precision_score,
                 "task_counts": task_counts,
                 "notes_count": notes_count,

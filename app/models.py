@@ -186,12 +186,20 @@ class MemoryModel:
 
     @staticmethod
     def list_active(category: Optional[str] = None) -> List[Dict[str, Any]]:
-        query = "SELECT * FROM memories WHERE status = 'active'"
+        query = """
+            SELECT m.*,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM memory_decision_logs l
+                       WHERE l.memory_id = m.id AND l.action = 'FLAG_FOR_REVIEW'
+                   ) THEN 1 ELSE 0 END as is_flagged
+            FROM memories m
+            WHERE m.status = 'active'
+        """
         params = []
         if category:
-            query += " AND category = ?"
+            query += " AND m.category = ?"
             params.append(category)
-        query += " ORDER BY confidence_weight DESC, updated_at DESC"
+        query += " ORDER BY m.confidence_weight DESC, m.updated_at DESC"
         with get_db() as conn:
             cur = conn.cursor()
             cur.execute(query, tuple(params))
@@ -199,12 +207,69 @@ class MemoryModel:
 
     @staticmethod
     def list_all(status: Optional[str] = None) -> List[Dict[str, Any]]:
-        query = "SELECT * FROM memories"
+        query = """
+            SELECT m.*,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM memory_decision_logs l
+                       WHERE l.memory_id = m.id AND l.action = 'FLAG_FOR_REVIEW'
+                   ) THEN 1 ELSE 0 END as is_flagged
+            FROM memories m
+        """
         params = []
         if status:
-            query += " WHERE status = ?"
+            query += " WHERE m.status = ?"
             params.append(status)
-        query += " ORDER BY updated_at DESC"
+        query += " ORDER BY m.updated_at DESC"
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(query, tuple(params))
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def list_superseded() -> List[Dict[str, Any]]:
+        """Returns superseded memories with relationship to their replacements."""
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT m.*, r.content as replacement_content
+                FROM memories m
+                LEFT JOIN memories r ON m.superseded_by = r.id
+                WHERE m.status = 'superseded'
+                ORDER BY m.updated_at DESC
+            """)
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def list_flagged_conflicts() -> List[Dict[str, Any]]:
+        """Returns active memories involved in FLAG_FOR_REVIEW decisions."""
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT DISTINCT m.*
+                FROM memories m
+                INNER JOIN memory_decision_logs l ON m.id = l.memory_id
+                WHERE m.status = 'active' AND l.action = 'FLAG_FOR_REVIEW'
+                ORDER BY m.updated_at DESC
+            """)
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def search_all_statuses(q: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search memories by content text, optionally filtered by status."""
+        query = """
+            SELECT m.*,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM memory_decision_logs l
+                       WHERE l.memory_id = m.id AND l.action = 'FLAG_FOR_REVIEW'
+                   ) THEN 1 ELSE 0 END as is_flagged
+            FROM memories m
+            WHERE m.content LIKE ?
+        """
+        params = [f"%{q}%"]
+        if status:
+            query += " AND m.status = ?"
+            params.append(status)
+        query += " ORDER BY m.updated_at DESC"
         with get_db() as conn:
             cur = conn.cursor()
             cur.execute(query, tuple(params))
@@ -314,6 +379,7 @@ class FeedbackModel:
 
             correction_rate = (corrected / total * 100.0) if total > 0 else 0.0
             acceptance_rate = (accepted / total * 100.0) if total > 0 else 0.0
+            rejection_rate = (rejected / total * 100.0) if total > 0 else 0.0
 
             return {
                 "total_events": total,
@@ -322,6 +388,7 @@ class FeedbackModel:
                 "rejected_count": rejected,
                 "correction_rate_percent": round(correction_rate, 1),
                 "acceptance_rate_percent": round(acceptance_rate, 1),
+                "rejection_rate_percent": round(rejection_rate, 1),
                 "recent_feedback": recent
             }
 

@@ -199,11 +199,28 @@ class TestAdaptationSuite(unittest.TestCase):
             headers={"X-CSRF-Token": self.csrf_token}
         )
         self.assertEqual(res_fb.status_code, 200)
+        fb_data = res_fb.get_json()
+        self.assertTrue(fb_data["success"])
+        self.assertEqual(fb_data["decision"]["action"], "SUPERSEDE")
 
-        # Applied memory updated to the new rule via reconciliation
-        mem_after = MemoryModel.get(mem_id)
-        self.assertIn("medium priority", mem_after["content"])
-        self.assertAlmostEqual(mem_after["confidence_weight"], 0.55, places=2)
+        # Phase 5E: Old memory is preserved with status='superseded' and points to replacement
+        mem_old = MemoryModel.get(mem_id)
+        self.assertEqual(mem_old["status"], "superseded")
+        self.assertIsNotNone(mem_old["superseded_by"])
+        self.assertIn("urgent priority", mem_old["content"])  # Original content preserved intact
+
+        # Phase 5E: Replacement memory is active with the corrected rule and confidence 0.90
+        rep_id = mem_old["superseded_by"]
+        replacement = MemoryModel.get(rep_id)
+        self.assertIsNotNone(replacement)
+        self.assertEqual(replacement["status"], "active")
+        self.assertIn("medium priority", replacement["content"])
+        self.assertAlmostEqual(replacement["confidence_weight"], 0.90, places=2)
+
+        # Verify vector store synchronization: old memory unindexed, replacement indexed
+        self.assertNotIn(f"memory_{mem_id}", self.vs.documents)
+        self.assertIn(f"memory_{rep_id}", self.vs.documents)
+        self.assertIn("medium priority", self.vs.documents[f"memory_{rep_id}"]["text"])
 
     def test_feedback_rejected_workflow(self):
         from app.models import MemoryModel, TaskModel, FeedbackModel

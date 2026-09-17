@@ -1,6 +1,8 @@
 import re
+import string
 from typing import List, Dict, Any, Optional, Tuple
 from app.models import MemoryModel, MemoryDecisionLogModel, FeedbackModel
+from app.database import get_db, utc_now_iso
 from app import vector_store
 from app.config import (
     SIMILARITY_MATCH_THRESHOLD,
@@ -48,14 +50,28 @@ class MemoryPipeline:
             print(f"[MemoryPipeline] Vector synchronization failed for confidence on memory #{memory_id}: {e}. SQLite remains authoritative; will reconcile on next validation.")
 
     @classmethod
-    def extract_facts(cls, text: str, context_type: str = "general") -> List[Dict[str, Any]]:
+    def extract_facts(cls, text: str, context_type: str = "general", source_role: str = "user") -> List[Dict[str, Any]]:
         """
         Phase 1: Extract discrete atomic statements/rules from interactions.
         Identifies preferences, habits, corrections, and facts.
         """
+        # Safety: Only extract facts from user-authored content
+        if source_role not in ("user",):
+            return []
+
         facts = []
         raw = text.strip()
         lower = raw.lower()
+
+        # Prompt-injection safety: reject content with system prompt manipulation
+        INJECTION_PHRASES = [
+            "ignore previous", "ignore all previous", "you are now",
+            "system:", "[inst]", "[/inst]", "<<sys>>", "<</sys>>",
+            "disregard above", "new instructions:", "override:",
+            "forget everything", "ignore the above"
+        ]
+        if any(phrase in lower for phrase in INJECTION_PHRASES):
+            return []
 
         # Pattern 1: Explicit preference or habit expressions
         pref_patterns = [
@@ -98,6 +114,15 @@ class MemoryPipeline:
                 "raw_extracted": raw
             })
 
+        # Sanitize extracted facts
+        for fact in facts:
+            # Strip control characters
+            sanitized = ''.join(c for c in fact['content'] if c in string.printable)
+            # Enforce max length
+            if len(sanitized) > 1000:
+                sanitized = sanitized[:1000]
+            fact['content'] = sanitized
+
         return facts
 
     @classmethod
@@ -138,11 +163,12 @@ class MemoryPipeline:
         query_tf = vs._compute_tf(query_tokens)
         query_vec = vs._vectorize_tf(query_tf)
 
-        # For cancellation queries, also vectorize the target rule content without meta-phrases
+        # For cancellation and correction queries, also vectorize the target rule content without meta-phrases
+        is_correction = category == 'correction' or 'correction' in triggered_by
         clean_query_vec = None
-        if is_deletion:
+        if is_deletion or is_correction:
             clean_content = re.sub(
-                r'(?i)\b(don\'t do this anymore|delete this rule|stop suggesting|no longer valid|never suggest)[:\s]*',
+                r'(?i)\b(don\'t do this anymore|delete this rule|stop suggesting|no longer valid|never suggest|user corrected|actually|change it to|instead|should be)[:\s\'\"]*',
                 '',
                 content
             ).strip()
@@ -196,10 +222,97 @@ class MemoryPipeline:
                 "reasoning": "Memory invalidated and deactivated upon user command."
             }
 
-        # Decision 2: UPDATE (Refinement or contradiction of existing memory)
-        # Uses CONTRADICTION_THRESHOLD (0.40) for explicit corrections and SIMILARITY_MATCH_THRESHOLD (0.45) for general updates
-        update_threshold = CONTRADICTION_THRESHOLD if (category == "correction" or "correction" in triggered_by) else SIMILARITY_MATCH_THRESHOLD
-        if top_match and highest_sim >= update_threshold:
+        is_correction = category == 'correction' or 'correction' in triggered_by
+
+        # Decision 1.5: SUPERSEDE (Correction intent with similarity >= SIMILARITY_MATCH_THRESHOLD)
+        if not is_deletion and is_correction and top_match and highest_sim >= SIMILARITY_MATCH_THRESHOLD:
+            old_id = top_match["id"]
+            now = utc_now_iso()
+            reasoning = f"Superseded memory #{old_id} with new correction. Match similarity: {highest_sim:.2f}"
+
+            # Atomic SQLite operation: create replacement, mark old superseded, record log
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO memories (category, content, confidence_weight, status, source_context, update_count, created_at, updated_at)
+                    VALUES (?, ?, ?, 'active', ?, 0, ?, ?)
+                """, (category, content.strip(), confidence, source_context.strip(), now, now))
+                new_id = cur.lastrowid
+
+                cur.execute("""
+                    UPDATE memories
+                    SET status = 'superseded', superseded_by = ?, updated_at = ?
+                    WHERE id = ?
+                """, (new_id, now, old_id))
+
+                cur.execute("""
+                    INSERT INTO memory_decision_logs (memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
+                    VALUES (?, 'SUPERSEDE', ?, ?, ?, ?, ?)
+                """, (new_id, reasoning, top_match["content"], content, triggered_by, now))
+
+            vector_synced = True
+            try:
+                vs.remove_document(old_id, doc_type="memory")
+                vs.index_document(
+                    doc_id=new_id,
+                    doc_type="memory",
+                    text=content,
+                    metadata={"category": category, "confidence_weight": confidence}
+                )
+            except Exception as e:
+                vector_synced = False
+                print(f"[MemoryPipeline] Vector synchronization failed for superseded memory #{old_id}->#{new_id}: {e}")
+
+            return {
+                "action": "SUPERSEDE",
+                "memory_id": new_id,
+                "superseded_memory_id": old_id,
+                "vector_synced": vector_synced,
+                "reasoning": reasoning
+            }
+
+        # Decision 1.8: FLAG_FOR_REVIEW (Ambiguous conflict: CONTRADICTION_THRESHOLD <= similarity < SIMILARITY_MATCH_THRESHOLD)
+        if not is_deletion and top_match and CONTRADICTION_THRESHOLD <= highest_sim < SIMILARITY_MATCH_THRESHOLD:
+            old_id = top_match["id"]
+            now = utc_now_iso()
+            flag_confidence = min(confidence, 0.35)
+            reasoning = f"Flagged for review due to conflict with active memory #{old_id}. Match similarity: {highest_sim:.2f}"
+
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO memories (category, content, confidence_weight, status, source_context, update_count, created_at, updated_at)
+                    VALUES (?, ?, ?, 'active', ?, 0, ?, ?)
+                """, (category, content.strip(), flag_confidence, source_context.strip(), now, now))
+                new_id = cur.lastrowid
+
+                cur.execute("""
+                    INSERT INTO memory_decision_logs (memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
+                    VALUES (?, 'FLAG_FOR_REVIEW', ?, ?, ?, ?, ?)
+                """, (new_id, reasoning, top_match["content"], content, triggered_by, now))
+
+            vector_synced = True
+            try:
+                vs.index_document(
+                    doc_id=new_id,
+                    doc_type="memory",
+                    text=content,
+                    metadata={"category": category, "confidence_weight": flag_confidence, "flagged": True}
+                )
+            except Exception as e:
+                vector_synced = False
+                print(f"[MemoryPipeline] Vector synchronization failed for flagged memory #{new_id}: {e}")
+
+            return {
+                "action": "FLAG_FOR_REVIEW",
+                "memory_id": new_id,
+                "conflicting_memory_id": old_id,
+                "vector_synced": vector_synced,
+                "reasoning": reasoning
+            }
+
+        # Decision 2: UPDATE (General high-similarity refinement: similarity >= SIMILARITY_MATCH_THRESHOLD and not correction)
+        if not is_deletion and not is_correction and top_match and highest_sim >= SIMILARITY_MATCH_THRESHOLD:
             old_content = top_match["content"]
             old_id = top_match["id"]
             new_confidence = min(MAX_CONFIDENCE_WEIGHT, top_match["confidence_weight"] + 0.1)
