@@ -41,7 +41,11 @@ class Phase5CTestBase(unittest.TestCase):
         self.p_vec.start()
         self.p_auth.start()
 
-        vector_store_module.global_vector_store = VectorStore(storage_path=self.test_vec_path)
+        vs = VectorStore(storage_path=self.test_vec_path)
+        vector_store_module.global_vector_store = vs
+        import app.routes.api_tasks as api_tasks_module
+        self.p_route_vs = patch.object(api_tasks_module, "global_vector_store", vs)
+        self.p_route_vs.start()
 
         self.app = create_app()
         self.app.config['TESTING'] = True
@@ -56,6 +60,7 @@ class Phase5CTestBase(unittest.TestCase):
         self.csrf_token = data.get('csrf_token', '')
 
     def tearDown(self):
+        self.p_route_vs.stop()
         self.p_auth.stop()
         self.p_db.stop()
         self.p_vec.stop()

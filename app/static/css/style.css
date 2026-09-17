@@ -776,6 +776,37 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.note-card.is-pinned {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(88, 166, 255, 0.12);
+}
+
+.note-pin-badge {
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.35rem;
+}
+
+.btn-pin {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  transition: var(--transition);
+}
+
+.btn-pin:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.btn-pin:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .note-title {
   font-size: 1.05rem;
   font-weight: 700;
@@ -786,10 +817,73 @@ body {
   font-size: 0.86rem;
   color: var(--text-secondary);
   line-height: 1.5;
-  white-space: pre-wrap;
+  word-break: break-word;
   max-height: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.note-content h1,
+.note-content h2,
+.note-content h3,
+.note-content h4,
+.note-content h5,
+.note-content h6 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0.35rem 0 0.2rem;
+  color: var(--text-primary);
+}
+
+.note-content p {
+  margin: 0.25rem 0;
+}
+
+.note-content ul,
+.note-content ol {
+  padding-left: 1.25rem;
+  margin: 0.25rem 0;
+}
+
+.note-content li {
+  margin-bottom: 0.15rem;
+}
+
+.note-content blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.6rem;
+  margin: 0.35rem 0;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.note-content code {
+  font-family: monospace;
+  font-size: 0.82rem;
+  background-color: var(--bg-tertiary);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+}
+
+.note-content pre {
+  background-color: var(--bg-tertiary);
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  margin: 0.35rem 0;
+}
+
+.note-content pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+.note-content a {
+  color: var(--accent);
+  text-decoration: underline;
+  word-break: break-all;
 }
 
 .note-tags {

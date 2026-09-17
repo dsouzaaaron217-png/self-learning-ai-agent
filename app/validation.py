@@ -460,7 +460,13 @@ def validate_note_input(data: Dict[str, Any], is_update: bool = False) -> Dict[s
         clean["tags"] = tags
 
     if "pinned" in data:
-        clean["pinned"] = 1 if data["pinned"] else 0
+        p = data["pinned"]
+        if isinstance(p, bool):
+            clean["pinned"] = 1 if p else 0
+        elif isinstance(p, int) and p in (0, 1) and not isinstance(p, bool):
+            clean["pinned"] = p
+        else:
+            raise ValueError("Pinned must be a boolean (true or false).")
 
     return clean
 
