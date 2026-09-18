@@ -89,14 +89,14 @@ def main():
 ========================================================================
   * Status: 100% On-Device Active (Zero Cloud Calls)
   * Database: {DB_PATH}
-  * Interface: http://{args.host}:{args.port}
+  * Interface: http://{validated_host}:{args.port}
   * Engine: Built-in Local Semantic Reasoner (Pluggable Local LLM)
   * Privacy: Local SQLite + Vector Index + Zero Telemetry
 ========================================================================
     """
     print(banner)
 
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    app.run(host=validated_host, port=args.port, debug=args.debug)
 
 if __name__ == "__main__":
     main()

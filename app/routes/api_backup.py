@@ -66,11 +66,24 @@ def export_backup():
         cur.execute("SELECT * FROM feedback_events")
         feedback_events = [dict(r) for r in cur.fetchall()]
 
+        cur.execute("SELECT * FROM chat_messages ORDER BY id ASC")
+        chat_messages = []
+        for r in cur.fetchall():
+            m = dict(r)
+            if m.get("cited_memories"):
+                try:
+                    m["cited_memories"] = json.loads(m["cited_memories"])
+                except Exception:
+                    pass
+            else:
+                m["cited_memories"] = None
+            chat_messages.append(m)
+
         cur.execute("SELECT * FROM settings")
         settings = {r[0]: r[1] for r in cur.fetchall()}
 
     backup_payload = {
-        "version": "1.2.0",
+        "version": "1.3.0",
         "exported_at": utc_now_iso(),
         "application": "Cognito Offline Agent",
         "data": {
@@ -79,6 +92,7 @@ def export_backup():
             "memories": memories,
             "decision_logs": decision_logs,
             "feedback_events": feedback_events,
+            "chat_messages": chat_messages,
             "settings": settings
         }
     }
@@ -178,6 +192,8 @@ def import_backup():
                 cur.execute("DELETE FROM feedback_events")
             if "decision_logs" in payload_data:
                 cur.execute("DELETE FROM memory_decision_logs")
+            if "chat_messages" in payload_data:
+                cur.execute("DELETE FROM chat_messages")
             if "memories" in payload_data:
                 cur.execute("DELETE FROM memories")
             if "notes" in payload_data:
@@ -234,6 +250,26 @@ def import_backup():
                     """, (f["id"], f["suggestion_type"], f.get("item_id"), f.get("memory_id_applied"),
                           f["original_suggestion"], f["user_action"], f.get("correction_detail"), f["timestamp"]))
                 restored_counts["feedback_events"] = len(payload_data["feedback_events"])
+
+            if "chat_messages" in payload_data:
+                for cm in payload_data["chat_messages"]:
+                    cited = cm.get("cited_memories")
+                    if cited is not None and not isinstance(cited, str):
+                        cited_str = json.dumps(cited)
+                    else:
+                        cited_str = cited
+                    cur.execute("""
+                        INSERT INTO chat_messages (id, session_id, role, content, cited_memories, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        cm["id"],
+                        cm["session_id"].strip(),
+                        cm["role"].strip().lower(),
+                        cm["content"].strip(),
+                        cited_str,
+                        cm.get("created_at", utc_now_iso())
+                    ))
+                restored_counts["chat_messages"] = len(payload_data["chat_messages"])
 
             if "settings" in payload_data:
                 for key, val in payload_data["settings"].items():

@@ -1,10 +1,16 @@
+from datetime import datetime, timezone, timedelta
 from flask import Flask, render_template, request, jsonify, session
 from app.config import OFFLINE_STRICT_MODE
 from app.database import init_db
 from app.models import MemoryModel, MemoryDecisionLogModel
 from app.memory.pipeline import MemoryPipeline
 from app.routes import register_blueprints
-from app.auth import get_or_create_secret_key, validate_csrf_token
+from app.auth import (
+    get_or_create_secret_key,
+    validate_csrf_token,
+    get_auth_version,
+    generate_csrf_token
+)
 
 def create_app() -> Flask:
     """Application factory for Cognito Offline Agent."""
@@ -16,6 +22,7 @@ def create_app() -> Flask:
 
     # Session and Request Limits
     app.secret_key = get_or_create_secret_key()
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=24)
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_SECURE"] = False  # Localhost HTTP
@@ -63,7 +70,26 @@ def create_app() -> Flask:
                 if not session.get("authenticated"):
                     return jsonify({"success": False, "error": "Authentication required"}), 401
 
-                # 2. CSRF Protection for state-changing methods
+                # 2. Inactivity Check (2 hours = 7200 seconds)
+                now_ts = datetime.now(timezone.utc).timestamp()
+                last_activity = session.get("last_activity")
+                if last_activity is not None and (now_ts - last_activity > 7200):
+                    session.clear()
+                    session["csrf_token"] = generate_csrf_token()
+                    return jsonify({"success": False, "error": "Session expired due to inactivity."}), 401
+
+                # 3. Auth Version Check (Invalidate sessions on password rotation)
+                current_version = get_auth_version()
+                session_version = session.get("auth_version", 1)
+                if session_version != current_version:
+                    session.clear()
+                    session["csrf_token"] = generate_csrf_token()
+                    return jsonify({"success": False, "error": "Session invalidated due to password change. Please log in again."}), 401
+
+                # Update activity timestamp for active authenticated session
+                session["last_activity"] = now_ts
+
+                # 4. CSRF Protection for state-changing methods
                 if request.method in ("POST", "PUT", "PATCH", "DELETE"):
                     submitted_token = request.headers.get("X-CSRF-Token")
                     session_token = session.get("csrf_token")

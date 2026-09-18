@@ -115,7 +115,7 @@ def validate_backup_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # Prevent accidental huge backup payloads
     max_items = 5000
-    for entity in ("tasks", "notes", "memories", "decision_logs", "feedback_events"):
+    for entity in ("tasks", "notes", "memories", "decision_logs", "feedback_events", "chat_messages"):
         if entity in data:
             if not isinstance(data[entity], list):
                 raise ValueError(f"Entity '{entity}' in backup must be a list.")
@@ -321,7 +321,54 @@ def validate_backup_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"Feedback event {f_id} missing required 'timestamp'.")
         _validate_optional_timestamp(ts, f"Feedback event {f_id} timestamp")
 
-    # 6. Validate Settings
+    # 6. Validate Chat Messages (Optional for backward compatibility with 1.1.0/1.2.0 backups)
+    if "chat_messages" in data:
+        chat_msg_ids = set()
+        for idx, cm in enumerate(data.get("chat_messages", [])):
+            if not isinstance(cm, dict):
+                raise ValueError(f"Chat message #{idx} must be an object.")
+            cm_id = cm.get("id")
+            if not isinstance(cm_id, int) or cm_id <= 0:
+                raise ValueError(f"Chat message #{idx} must have a positive integer 'id'.")
+            if cm_id in chat_msg_ids:
+                raise ValueError(f"Duplicate chat message id {cm_id} detected in backup payload.")
+            chat_msg_ids.add(cm_id)
+
+            session_id = cm.get("session_id")
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ValueError(f"Chat message {cm_id} missing required 'session_id'.")
+            if len(session_id.strip()) > MAX_SESSION_ID_LEN:
+                raise ValueError(f"Chat message {cm_id} session_id exceeds maximum length of {MAX_SESSION_ID_LEN} characters.")
+            if not re.match(r'^[a-zA-Z0-9_\-]+$', session_id.strip()):
+                raise ValueError(f"Chat message {cm_id} session_id contains invalid characters.")
+
+            role = cm.get("role")
+            if not isinstance(role, str) or role.strip().lower() not in ALLOWED_CHAT_ROLES:
+                raise ValueError(f"Chat message {cm_id} has invalid role '{role}'. Allowed: {', '.join(sorted(ALLOWED_CHAT_ROLES))}.")
+
+            content = cm.get("content")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError(f"Chat message {cm_id} missing required 'content'.")
+            if len(content.strip()) > MAX_CHAT_MESSAGE_LEN:
+                raise ValueError(f"Chat message {cm_id} content exceeds maximum length of {MAX_CHAT_MESSAGE_LEN} characters.")
+
+            cited = cm.get("cited_memories")
+            if cited is not None:
+                if isinstance(cited, str):
+                    try:
+                        parsed_cited = json.loads(cited)
+                        if not isinstance(parsed_cited, list):
+                            raise ValueError()
+                    except Exception:
+                        raise ValueError(f"Chat message {cm_id} 'cited_memories' is not a valid JSON list.")
+                elif isinstance(cited, list):
+                    pass
+                else:
+                    raise ValueError(f"Chat message {cm_id} 'cited_memories' must be a list, valid JSON string, or null.")
+
+            _validate_optional_timestamp(cm.get("created_at"), f"Chat message {cm_id} created_at")
+
+    # 7. Validate Settings
     if "settings" in data:
         settings = data["settings"]
         if not isinstance(settings, dict):
