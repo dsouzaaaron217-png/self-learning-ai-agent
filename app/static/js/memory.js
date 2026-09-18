@@ -5,12 +5,31 @@
 
 let activeMemoryFilter = 'all';
 
+async function loadConflicts() {
+  try {
+    const res = await fetch('/api/memory/conflicts');
+    const data = await res.json();
+    if (data.success) {
+      AppState.unresolvedConflicts = data.conflicts || [];
+      const badge = document.getElementById('conflictsFilterBadge');
+      if (badge) {
+        const count = AppState.unresolvedConflicts.length;
+        badge.innerText = count;
+        badge.style.display = count > 0 ? 'inline-block' : 'none';
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load memory conflicts', err);
+  }
+}
+
 async function loadMemories() {
   try {
     const res = await fetch('/api/memory');
     const data = await res.json();
     if (data.success) {
       AppState.memories = data.memories;
+      await loadConflicts();
       renderMemories();
       const badge = document.getElementById('navMemoryCount');
       if (badge) badge.innerText = `${data.memories.length} rules`;
@@ -35,14 +54,125 @@ async function filterMemories(category) {
     } catch (err) {
       console.error('Failed to load superseded memories', err);
     }
+  } else if (category === 'conflicts') {
+    await loadConflicts();
   }
   renderMemories();
+}
+
+async function resolveConflictItem(memoryId, action) {
+  try {
+    const res = await fetch(`/api/memory/conflicts/${memoryId}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action })
+    });
+    const data = await res.json();
+    if (data.success) {
+      let actionLabel = 'Conflict resolved';
+      if (action === 'keep_new') actionLabel = 'Kept new memory (superseded old)';
+      else if (action === 'keep_old') actionLabel = 'Kept existing memory (discarded new)';
+      else if (action === 'keep_both') actionLabel = 'Kept both memories active';
+      showToast(actionLabel, 'success');
+      await loadMemories();
+      await loadConflicts();
+      if (typeof loadMetrics === 'function') await loadMetrics();
+      renderMemories();
+    } else {
+      showToast(data.error || 'Failed to resolve conflict', 'error');
+    }
+  } catch (err) {
+    showToast('Network error resolving conflict', 'error');
+  }
 }
 
 function renderMemories() {
   const container = document.getElementById('memoriesContainer');
   if (!container) return;
   container.innerHTML = '';
+
+  if (activeMemoryFilter === 'conflicts') {
+    const conflicts = AppState.unresolvedConflicts || [];
+    if (conflicts.length === 0) {
+      container.innerHTML = `<div class="card-desc" style="text-align:center; padding: 2.5rem;">No unresolved memory conflicts. Any ambiguous or contradictory rules flagged by Cognito will appear here for review.</div>`;
+      return;
+    }
+
+    conflicts.forEach(c => {
+      const cand = c.candidate_memory || {};
+      const conf = c.conflicting_memory;
+      const prov = c.conflict_provenance || {};
+      const simText = prov.similarity_score != null
+        ? `${Math.round(prov.similarity_score * 100)}%`
+        : (c.similarity != null ? `${Math.round(c.similarity * 100)}%` : 'Ambiguous');
+
+      const card = document.createElement('div');
+      card.className = 'conflict-card';
+
+      const candConfPct = Math.round((cand.confidence || cand.confidence_weight || 0.7) * 100);
+      const confConfPct = conf && (conf.confidence != null || conf.confidence_weight != null)
+        ? Math.round((conf.confidence || conf.confidence_weight) * 100)
+        : null;
+
+      card.innerHTML = `
+        <div class="conflict-header">
+          <div class="conflict-title-row">
+            <span class="flagged-badge">⚠️ Conflict Review #${c.id}</span>
+            <span class="conflict-similarity-badge">Match Similarity: ${simText}</span>
+          </div>
+          <div class="conflict-reason-banner">
+            <strong>Reason:</strong> ${escapeHtml(prov.reasoning || 'Flagged for review due to conflict')}
+          </div>
+        </div>
+
+        <div class="conflict-comparison-grid">
+          <!-- Candidate (New) Column -->
+          <div class="conflict-col candidate-col">
+            <div class="conflict-col-header">
+              <span class="conflict-col-title">New Candidate Proposal</span>
+              <span class="cat-badge ${cand.category}">${cand.category}</span>
+            </div>
+            <div class="conflict-content-box">
+              <div class="memory-text">${escapeHtml(cand.content || '')}</div>
+              <div class="conflict-meta-line">
+                <span>Confidence: ${candConfPct}%</span>
+                <span>Source: ${escapeHtml(cand.source_context || 'AI Copilot / Extraction')}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Conflicting (Existing) Column -->
+          <div class="conflict-col existing-col">
+            <div class="conflict-col-header">
+              <span class="conflict-col-title">Existing Memory #${conf && conf.id ? conf.id : 'N/A'}</span>
+              ${conf && conf.category ? `<span class="cat-badge ${conf.category}">${conf.category}</span>` : ''}
+            </div>
+            <div class="conflict-content-box">
+              <div class="memory-text">${conf && conf.content ? escapeHtml(conf.content) : '<em>No prior content available</em>'}</div>
+              <div class="conflict-meta-line">
+                ${confConfPct !== null ? `<span>Confidence: ${confConfPct}%</span>` : ''}
+                <span>Status: ${conf && conf.status ? conf.status : 'active'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="conflict-actions-bar">
+          <button class="btn btn-primary btn-sm" onclick="resolveConflictItem(${c.id}, 'keep_new')">
+            Keep New (Supersede Old)
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="resolveConflictItem(${c.id}, 'keep_old')">
+            Keep Old (Discard New)
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="resolveConflictItem(${c.id}, 'keep_both')">
+            Keep Both (Active)
+          </button>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+    return;
+  }
 
   let list = [];
   if (activeMemoryFilter === 'superseded') {
@@ -100,6 +230,11 @@ function renderMemories() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
           Why this exists
         </button>
+        ${isFlagged ? `
+          <button class="btn-conflict-review" onclick="filterMemories('conflicts')" title="Review this conflict">
+            Review Conflict
+          </button>
+        ` : ''}
         ${!isSuperseded ? `
           <button class="btn-icon" onclick="openEditMemoryModal(${mem.id})" title="Edit Memory">✏️</button>
           <button class="btn-icon" onclick="deleteMemoryItem(${mem.id})" title="Delete Memory">🗑️</button>

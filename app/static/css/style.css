@@ -1133,6 +1133,144 @@ body {
   border-color: var(--accent);
 }
 
+/* Conflict Resolution Styles (Phase 5F.3) */
+.conflicts-badge {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background-color: var(--danger, #ef4444);
+  color: #fff;
+  font-weight: 700;
+  margin-left: 0.35rem;
+}
+
+.btn-conflict-review {
+  background-color: var(--warning-subtle, rgba(234, 179, 8, 0.15));
+  border: 1px solid var(--warning, #eab308);
+  color: var(--warning, #eab308);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-conflict-review:hover {
+  background-color: var(--warning, #eab308);
+  color: #000;
+}
+
+.conflict-card {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--warning, #eab308);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.conflict-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.conflict-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.conflict-similarity-badge {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background-color: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+.conflict-reason-banner {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;
+}
+
+.conflict-comparison-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .conflict-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.conflict-col {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.candidate-col {
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.existing-col {
+  border-color: rgba(156, 163, 175, 0.4);
+}
+
+.conflict-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.4rem;
+}
+
+.conflict-col-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.conflict-content-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.conflict-meta-line {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+}
+
+.conflict-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+
 /* ==========================================================================
    AI COPILOT CHAT
    ========================================================================== */

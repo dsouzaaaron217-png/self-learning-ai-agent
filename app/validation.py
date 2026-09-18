@@ -49,6 +49,7 @@ SUPPORTED_APPLICATION_NAME = "Cognito Offline Agent"
 ALLOWED_MEMORY_STATUSES = {"active", "superseded", "deleted"}
 ALLOWED_DECISION_ACTIONS = {"ADD", "UPDATE", "DELETE", "SUPERSEDE", "FLAG_FOR_REVIEW"}
 ALLOWED_ENGINES = {"local", "ollama"}
+ALLOWED_CONFLICT_ACTIONS = {"keep_new", "keep_old", "keep_both"}
 
 def compute_backup_checksum(data_subtree: Dict[str, Any]) -> str:
     """
@@ -650,3 +651,27 @@ def validate_pagination_limit(limit_val: Any, default: int = 50) -> int:
         return min(val, MAX_PAGINATION_LIMIT)
     except (ValueError, TypeError):
         raise ValueError(f"Invalid pagination limit. Must be an integer between 1 and {MAX_PAGINATION_LIMIT}.")
+
+def validate_conflict_resolution_input(data: Dict[str, Any]) -> str:
+    """
+    Validates conflict resolution request payload.
+    Rejects missing action, null action, non-string action, or unsupported action values.
+    Returns cleaned action string.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("Conflict resolution payload must be a JSON object.")
+
+    if "action" not in data:
+        raise ValueError("Resolution action is required.")
+
+    action = data.get("action")
+    if not isinstance(action, str) or not action.strip():
+        raise ValueError("Resolution action must be a non-empty string.")
+
+    clean_action = action.strip().lower()
+    if clean_action not in ALLOWED_CONFLICT_ACTIONS:
+        raise ValueError(
+            f"Invalid resolution action '{action}'. Allowed actions: {', '.join(sorted(ALLOWED_CONFLICT_ACTIONS))}."
+        )
+
+    return clean_action

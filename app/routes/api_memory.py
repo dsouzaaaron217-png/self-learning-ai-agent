@@ -5,7 +5,8 @@ from app.vector_store import global_vector_store
 from app.validation import (
     parse_and_validate_json,
     validate_memory_input,
-    validate_pagination_limit
+    validate_pagination_limit,
+    validate_conflict_resolution_input
 )
 
 api_memory_bp = Blueprint("api_memory", __name__, url_prefix="/api/memory")
@@ -190,3 +191,48 @@ def get_rejection_rate():
         "rejected_count": metrics.get("rejected_count", 0),
         "total_events": metrics.get("total_events", 0)
     })
+
+@api_memory_bp.route("/conflicts", methods=["GET"])
+def list_memory_conflicts():
+    """Returns all unresolved active memory conflicts."""
+    conflicts = MemoryModel.list_unresolved_conflicts()
+    return jsonify({"success": True, "conflicts": conflicts})
+
+@api_memory_bp.route("/conflicts/<int:memory_id>", methods=["GET"])
+def get_memory_conflict(memory_id):
+    """Returns details for a single unresolved memory conflict."""
+    conflict = MemoryModel.get_unresolved_conflict(memory_id)
+    if not conflict:
+        mem = MemoryModel.get(memory_id)
+        if not mem:
+            return jsonify({"success": False, "error": "Memory not found"}), 404
+        return jsonify({"success": False, "error": "Conflict not found or already resolved"}), 404
+    return jsonify({"success": True, "conflict": conflict})
+
+@api_memory_bp.route("/conflicts/<int:memory_id>/resolve", methods=["POST"])
+def resolve_memory_conflict(memory_id):
+    """
+    Resolves an active memory conflict.
+    Request body: {"action": "keep_new" | "keep_old" | "keep_both"}
+    """
+    try:
+        raw_data = parse_and_validate_json(request)
+        action = validate_conflict_resolution_input(raw_data)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    mem = MemoryModel.get(memory_id)
+    if not mem:
+        return jsonify({"success": False, "error": "Memory not found"}), 404
+
+    conflict = MemoryModel.get_unresolved_conflict(memory_id)
+    if not conflict:
+        return jsonify({"success": False, "error": "Memory is not in an unresolved conflict state."}), 400
+
+    try:
+        res = MemoryModel.resolve_conflict(memory_id, action, vector_store=global_vector_store)
+        return jsonify(res), 200
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to resolve conflict: {e}"}), 500

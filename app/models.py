@@ -1,5 +1,7 @@
 import json
+import re
 from typing import List, Dict, Any, Optional
+from app.config import BASE_CONFIDENCE_WEIGHT
 from app.database import get_db, utc_now_iso
 
 class TaskModel:
@@ -191,6 +193,11 @@ class MemoryModel:
                    CASE WHEN EXISTS (
                        SELECT 1 FROM memory_decision_logs l
                        WHERE l.memory_id = m.id AND l.action = 'FLAG_FOR_REVIEW'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM memory_decision_logs r
+                           WHERE r.memory_id = m.id AND r.triggered_by = 'conflict_resolution'
+                           AND r.id > l.id
+                       )
                    ) THEN 1 ELSE 0 END as is_flagged
             FROM memories m
             WHERE m.status = 'active'
@@ -212,6 +219,11 @@ class MemoryModel:
                    CASE WHEN EXISTS (
                        SELECT 1 FROM memory_decision_logs l
                        WHERE l.memory_id = m.id AND l.action = 'FLAG_FOR_REVIEW'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM memory_decision_logs r
+                           WHERE r.memory_id = m.id AND r.triggered_by = 'conflict_resolution'
+                           AND r.id > l.id
+                       )
                    ) THEN 1 ELSE 0 END as is_flagged
             FROM memories m
         """
@@ -241,7 +253,7 @@ class MemoryModel:
 
     @staticmethod
     def list_flagged_conflicts() -> List[Dict[str, Any]]:
-        """Returns active memories involved in FLAG_FOR_REVIEW decisions."""
+        """Returns active memories involved in unresolved FLAG_FOR_REVIEW decisions."""
         with get_db() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -249,6 +261,11 @@ class MemoryModel:
                 FROM memories m
                 INNER JOIN memory_decision_logs l ON m.id = l.memory_id
                 WHERE m.status = 'active' AND l.action = 'FLAG_FOR_REVIEW'
+                AND NOT EXISTS (
+                    SELECT 1 FROM memory_decision_logs r
+                    WHERE r.memory_id = m.id AND r.triggered_by = 'conflict_resolution'
+                    AND r.id > l.id
+                )
                 ORDER BY m.updated_at DESC
             """)
             return [dict(r) for r in cur.fetchall()]
@@ -261,6 +278,11 @@ class MemoryModel:
                    CASE WHEN EXISTS (
                        SELECT 1 FROM memory_decision_logs l
                        WHERE l.memory_id = m.id AND l.action = 'FLAG_FOR_REVIEW'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM memory_decision_logs r
+                           WHERE r.memory_id = m.id AND r.triggered_by = 'conflict_resolution'
+                           AND r.id > l.id
+                       )
                    ) THEN 1 ELSE 0 END as is_flagged
             FROM memories m
             WHERE m.content LIKE ?
@@ -274,6 +296,288 @@ class MemoryModel:
             cur = conn.cursor()
             cur.execute(query, tuple(params))
             return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def get_unresolved_conflict(memory_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Returns full conflict information for an active candidate memory if it is
+        currently in an unresolved FLAG_FOR_REVIEW conflict state.
+        Returns None if memory does not exist, is not active, or is already resolved.
+        """
+        candidate = MemoryModel.get(memory_id)
+        if not candidate or candidate["status"] != "active":
+            return None
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT * FROM memory_decision_logs
+                WHERE memory_id = ? AND action = 'FLAG_FOR_REVIEW'
+                ORDER BY id DESC LIMIT 1
+            """, (memory_id,))
+            flag_log = cur.fetchone()
+            if not flag_log:
+                return None
+
+            flag_dict = dict(flag_log)
+
+            cur.execute("""
+                SELECT 1 FROM memory_decision_logs
+                WHERE memory_id = ? AND triggered_by = 'conflict_resolution' AND id > ?
+                LIMIT 1
+            """, (memory_id, flag_dict["id"]))
+            if cur.fetchone():
+                return None
+
+        conflicting_id = None
+        match = re.search(r'active memory #(\d+)', flag_dict.get("reasoning", ""))
+        if match:
+            try:
+                conflicting_id = int(match.group(1))
+            except ValueError:
+                conflicting_id = None
+
+        sim_score = None
+        sim_match = re.search(r'similarity:\s*([\d\.]+)', flag_dict.get("reasoning", ""), re.IGNORECASE)
+        if sim_match:
+            try:
+                sim_score = float(sim_match.group(1))
+            except ValueError:
+                sim_score = None
+
+        conflicting_mem = None
+        if conflicting_id:
+            conflicting_mem = MemoryModel.get(conflicting_id)
+
+        if not conflicting_mem and flag_dict.get("previous_content"):
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM memories WHERE content = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+                    (flag_dict["previous_content"],)
+                )
+                row = cur.fetchone()
+                if row:
+                    conflicting_mem = dict(row)
+                    conflicting_id = conflicting_mem["id"]
+
+        if conflicting_mem:
+            conflicting_data = {
+                "id": conflicting_mem["id"],
+                "category": conflicting_mem["category"],
+                "content": conflicting_mem["content"],
+                "confidence": conflicting_mem.get("confidence_weight", BASE_CONFIDENCE_WEIGHT),
+                "confidence_weight": conflicting_mem.get("confidence_weight", BASE_CONFIDENCE_WEIGHT),
+                "status": conflicting_mem["status"],
+                "source_context": conflicting_mem.get("source_context", ""),
+                "created_at": conflicting_mem.get("created_at"),
+                "updated_at": conflicting_mem.get("updated_at")
+            }
+        elif flag_dict.get("previous_content"):
+            conflicting_data = {
+                "id": conflicting_id,
+                "category": candidate["category"],
+                "content": flag_dict["previous_content"],
+                "confidence": None,
+                "confidence_weight": None,
+                "status": "active" if conflicting_id else "unknown",
+                "source_context": "",
+                "created_at": None,
+                "updated_at": None
+            }
+        else:
+            conflicting_data = None
+
+        candidate_data = {
+            "id": candidate["id"],
+            "category": candidate["category"],
+            "content": candidate["content"],
+            "confidence": candidate.get("confidence_weight", BASE_CONFIDENCE_WEIGHT),
+            "confidence_weight": candidate.get("confidence_weight", BASE_CONFIDENCE_WEIGHT),
+            "status": candidate["status"],
+            "source_context": candidate.get("source_context", ""),
+            "created_at": candidate.get("created_at"),
+            "updated_at": candidate.get("updated_at")
+        }
+
+        return {
+            "id": candidate["id"],
+            "candidate_memory": candidate_data,
+            "conflicting_memory": conflicting_data,
+            "similarity": sim_score,
+            "conflict_provenance": {
+                "decision_log_id": flag_dict["id"],
+                "reasoning": flag_dict.get("reasoning", ""),
+                "similarity_score": sim_score,
+                "timestamp": flag_dict.get("timestamp"),
+                "trigger": flag_dict.get("triggered_by", "system"),
+                "triggered_by": flag_dict.get("triggered_by", "system"),
+                "conflicting_memory_id": conflicting_id
+            }
+        }
+
+    @staticmethod
+    def list_unresolved_conflicts() -> List[Dict[str, Any]]:
+        """Returns all unresolved active memory conflicts."""
+        flagged_memories = MemoryModel.list_flagged_conflicts()
+        conflicts = []
+        for mem in flagged_memories:
+            c = MemoryModel.get_unresolved_conflict(mem["id"])
+            if c:
+                conflicts.append(c)
+        return conflicts
+
+    @staticmethod
+    def resolve_conflict(memory_id: int, action: str, vector_store: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Atomically resolves a memory conflict in SQLite and synchronizes the vector store.
+        Supported actions: 'keep_new', 'keep_old', 'keep_both'.
+        """
+        if action not in ('keep_new', 'keep_old', 'keep_both'):
+            raise ValueError(f"Invalid resolution action: {action}")
+
+        conflict = MemoryModel.get_unresolved_conflict(memory_id)
+        if not conflict:
+            raise ValueError(f"Memory #{memory_id} is not in an unresolved conflict state.")
+
+        candidate = conflict["candidate_memory"]
+        conflicting = conflict["conflicting_memory"]
+        conflicting_id = conflicting["id"] if conflicting else None
+        now = utc_now_iso()
+        new_confidence = max(candidate.get("confidence_weight", BASE_CONFIDENCE_WEIGHT), BASE_CONFIDENCE_WEIGHT)
+
+        with get_db() as conn:
+            cur = conn.cursor()
+
+            if action == "keep_new":
+                # 1. Candidate remains active; restore confidence; clear flag state
+                cur.execute("""
+                    UPDATE memories
+                    SET confidence_weight = ?, updated_at = ?
+                    WHERE id = ?
+                """, (new_confidence, now, memory_id))
+
+                # 2. Conflicting memory becomes superseded by candidate
+                if conflicting_id:
+                    cur.execute("""
+                        UPDATE memories
+                        SET status = 'superseded', superseded_by = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (memory_id, now, conflicting_id))
+
+                # 3. Decision log on candidate memory
+                reasoning = (
+                    f"User resolved conflict: kept new memory #{memory_id}, superseded memory #{conflicting_id}."
+                    if conflicting_id else
+                    f"User resolved conflict: kept new memory #{memory_id}."
+                )
+                cur.execute("""
+                    INSERT INTO memory_decision_logs (memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
+                    VALUES (?, 'SUPERSEDE', ?, ?, ?, 'conflict_resolution', ?)
+                """, (
+                    memory_id,
+                    reasoning,
+                    conflicting["content"] if conflicting else None,
+                    candidate["content"],
+                    now
+                ))
+
+            elif action == "keep_old":
+                # 1. Candidate memory is deactivated (status = 'deleted')
+                cur.execute("""
+                    UPDATE memories
+                    SET status = 'deleted', updated_at = ?
+                    WHERE id = ?
+                """, (now, memory_id))
+
+                # 2. Conflicting memory remains active and unchanged
+
+                # 3. Decision log on candidate memory
+                reasoning = (
+                    f"User resolved conflict: rejected new candidate memory #{memory_id} in favor of existing memory #{conflicting_id}."
+                    if conflicting_id else
+                    f"User resolved conflict: rejected new candidate memory #{memory_id}."
+                )
+                cur.execute("""
+                    INSERT INTO memory_decision_logs (memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
+                    VALUES (?, 'DELETE', ?, ?, NULL, 'conflict_resolution', ?)
+                """, (
+                    memory_id,
+                    reasoning,
+                    candidate["content"],
+                    now
+                ))
+
+            elif action == "keep_both":
+                # 1. Candidate remains active; restore confidence; clear flag state
+                cur.execute("""
+                    UPDATE memories
+                    SET confidence_weight = ?, updated_at = ?
+                    WHERE id = ?
+                """, (new_confidence, now, memory_id))
+
+                # 2. Conflicting memory remains active and unchanged
+
+                # 3. Decision log on candidate memory
+                reasoning = (
+                    f"User resolved conflict: kept both memories (#{memory_id} and #{conflicting_id}) as valid preferences."
+                    if conflicting_id else
+                    f"User resolved conflict: kept candidate memory #{memory_id} as valid preference."
+                )
+                cur.execute("""
+                    INSERT INTO memory_decision_logs (memory_id, action, reasoning, previous_content, new_content, triggered_by, timestamp)
+                    VALUES (?, 'UPDATE', ?, ?, ?, 'conflict_resolution', ?)
+                """, (
+                    memory_id,
+                    reasoning,
+                    candidate["content"],
+                    candidate["content"],
+                    now
+                ))
+
+        # Vector store synchronization
+        if vector_store is None:
+            try:
+                from app.vector_store import global_vector_store
+                vs = global_vector_store
+            except Exception:
+                vs = None
+        else:
+            vs = vector_store
+
+        vector_synced = True
+        if vs is not None:
+            try:
+                if action == "keep_new":
+                    if conflicting_id:
+                        vs.remove_document(conflicting_id, doc_type="memory")
+                    vs.index_document(
+                        doc_id=memory_id,
+                        doc_type="memory",
+                        text=candidate["content"],
+                        metadata={"category": candidate["category"], "confidence_weight": new_confidence, "flagged": False}
+                    )
+                elif action == "keep_old":
+                    vs.remove_document(memory_id, doc_type="memory")
+                elif action == "keep_both":
+                    vs.index_document(
+                        doc_id=memory_id,
+                        doc_type="memory",
+                        text=candidate["content"],
+                        metadata={"category": candidate["category"], "confidence_weight": new_confidence, "flagged": False}
+                    )
+            except Exception as e:
+                vector_synced = False
+                print(f"[MemoryConflict] Warning: vector store synchronization failed during conflict resolution for memory #{memory_id}: {e}. SQLite remains authoritative.")
+
+        return {
+            "success": True,
+            "action": action,
+            "memory_id": memory_id,
+            "conflicting_memory_id": conflicting_id,
+            "vector_synced": vector_synced,
+            "memory": MemoryModel.get(memory_id)
+        }
 
     @staticmethod
     def update(memory_id: int, **kwargs) -> bool:
